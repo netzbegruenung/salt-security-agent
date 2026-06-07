@@ -8,8 +8,20 @@ from typing import Any
 import httpx
 
 from agent.config import LLMConfig, SaltConfig
+from agent.tools.alert_tool import send_alert
 from agent.tools.repo_tools import list_repo_files, read_repo_file
 from agent.tools.salt_tools import ls_minion
+from agent.tools.system_tools import (
+    get_cron_jobs,
+    get_failed_services,
+    get_last_logins,
+    get_listening_ports,
+    get_os_info,
+    get_running_services,
+    get_salt_grains,
+    get_suid_files,
+    get_users,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +79,109 @@ TOOL_DEFINITIONS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_os_info",
+            "description": "Return /etc/os-release contents on the minion (OS name, version, ID).",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_listening_ports",
+            "description": "Return TCP and UDP listening sockets on the minion with the owning process (ss -tulpen).",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_running_services",
+            "description": "List currently running systemd services on the minion.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_failed_services",
+            "description": "List failed systemd units on the minion (often a sign of tampering or misconfiguration).",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_suid_files",
+            "description": "Return SUID binaries under /usr, /bin, /sbin, /opt on the minion. Key privilege-escalation indicator.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_users",
+            "description": "Return local user accounts from /etc/passwd on the minion as username:uid:gid:home:shell. Does not expose passwords.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_cron_jobs",
+            "description": "Return root's crontab and a listing of /etc/cron.* directories on the minion. Common persistence mechanism.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_last_logins",
+            "description": "Return the last 20 login records on the minion (output of `last -n 20`).",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_salt_grains",
+            "description": "Return Salt grains (system metadata Salt knows about the minion) as YAML.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_alert",
+            "description": (
+                "Dispatch a security alert for an extremely critical deviation or a strong "
+                "indicator of compromise. Use sparingly — only for findings that require "
+                "immediate human attention. Routine drift or low-confidence findings should "
+                "be reported in the final report instead, not via this tool."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "high"],
+                        "description": "Severity of the alert.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Short headline of the alert (one line).",
+                    },
+                    "details": {
+                        "type": "string",
+                        "description": "Full details: what was found, where, evidence, and why it matters.",
+                    },
+                },
+                "required": ["severity", "title", "details"],
+            },
+        },
+    },
 ]
 
 
@@ -83,6 +198,31 @@ def _call_tool(
         return "\n".join(entries)
     if name == "read_repo_file":
         return read_repo_file(salt_cfg.repo_path, arguments["rel_path"])
+    if name == "get_os_info":
+        return get_os_info(minion)
+    if name == "get_listening_ports":
+        return get_listening_ports(minion)
+    if name == "get_running_services":
+        return get_running_services(minion)
+    if name == "get_failed_services":
+        return get_failed_services(minion)
+    if name == "get_suid_files":
+        return get_suid_files(minion)
+    if name == "get_users":
+        return get_users(minion)
+    if name == "get_cron_jobs":
+        return get_cron_jobs(minion)
+    if name == "get_last_logins":
+        return get_last_logins(minion)
+    if name == "get_salt_grains":
+        return get_salt_grains(minion)
+    if name == "send_alert":
+        return send_alert(
+            minion=minion,
+            severity=arguments["severity"],
+            title=arguments["title"],
+            details=arguments["details"],
+        )
     return f"Unknown tool: {name}"
 
 
@@ -120,43 +260,26 @@ def run_agent(
     }
 
     with httpx.Client(timeout=120) as client:
+        iterations_used = 0
         for iteration in range(MAX_ITERATIONS):
-            payload = {
-                "model": llm_cfg.model,
-                "messages": messages,
-                "tools": TOOL_DEFINITIONS,
-                "tool_choice": "auto",
-            }
-
+            iterations_used = iteration + 1
             response = client.post(
                 f"{llm_cfg.url}/chat/completions",
                 headers=headers,
-                json=payload,
+                json={
+                    "model": llm_cfg.model,
+                    "messages": messages,
+                    "tools": TOOL_DEFINITIONS,
+                    "tool_choice": "auto",
+                },
             )
             response.raise_for_status()
-            data = response.json()
-
-            choice = data["choices"][0]
+            choice = response.json()["choices"][0]
             message = choice["message"]
             messages.append(message)
 
             if choice["finish_reason"] != "tool_calls":
-                content = message.get("content") or ""
-                if content:
-                    logger.info("Agent finished after %d iteration(s).", iteration + 1)
-                    return content
-                # Model stopped without writing a report — explicitly request it.
-                logger.warning("Model returned empty content; requesting final report.")
-                messages.append({"role": "user", "content": "Investigation complete. Write your full findings report now."})
-                final_response = client.post(
-                    f"{llm_cfg.url}/chat/completions",
-                    headers=headers,
-                    json={"model": llm_cfg.model, "messages": messages, "tool_choice": "none"},
-                )
-                final_response.raise_for_status()
-                final_content = final_response.json()["choices"][0]["message"].get("content") or ""
-                logger.info("Agent finished after %d iteration(s) (+ recovery call).", iteration + 1)
-                return final_content
+                break
 
             for tool_call in message.get("tool_calls", []):
                 fn = tool_call["function"]
@@ -176,6 +299,25 @@ def run_agent(
                         "content": result,
                     }
                 )
+        else:
+            logger.warning("Agent reached max iterations (%d) for minion %s.", MAX_ITERATIONS, minion)
 
-    logger.warning("Agent reached max iterations (%d) for minion %s.", MAX_ITERATIONS, minion)
-    return "Max iterations reached without a final response."
+        logger.info("Tool loop ended after %d iteration(s); generating final report.", iterations_used)
+        messages.append({
+            "role": "user",
+            "content": (
+                "Your investigation is complete. Now write the final findings report in "
+                "Markdown. Include every finding with evidence, risk, and recommendation. "
+                "Respond with the report only — no preamble, no tool calls."
+            ),
+        })
+        report_response = client.post(
+            f"{llm_cfg.url}/chat/completions",
+            headers=headers,
+            json={"model": llm_cfg.model, "messages": messages},
+        )
+        report_response.raise_for_status()
+        report = report_response.json()["choices"][0]["message"].get("content") or ""
+        if not report:
+            logger.error("Final report call returned empty content for minion %s.", minion)
+        return report

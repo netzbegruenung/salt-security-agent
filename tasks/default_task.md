@@ -16,9 +16,23 @@ deviations from the expected configuration and any signs of compromise or miscon
    the intended state of configuration files as defined in the Salt repository, then compare
    with what you observe on the minion.
 
-4. **Report findings** — Summarise your findings clearly:
+4. **Raise alerts for critical findings** — If, and only if, you discover an *extremely
+   critical* configuration deviation or a *strong indicator of compromise* (for example:
+   an unknown SUID binary in a system path, an active reverse shell, an unauthorised SSH
+   key with root access, a process running from `/tmp` with network activity), call the
+   `send_alert` tool immediately with:
+   - `severity`: `"critical"` for active compromise indicators, `"high"` for severe
+     deviations that are not yet confirmed compromise.
+   - `title`: a one-line summary.
+   - `details`: full evidence and reasoning.
+
+   Do **not** use `send_alert` for routine configuration drift, missing comments, or
+   low-confidence observations — those belong in the final report only.
+
+5. **Report findings** — Summarise your findings clearly:
    - List any anomalies or suspicious items found.
    - For each finding, describe the evidence and the potential risk.
    - Suggest remediation steps where applicable.
+   - Note any alerts that were raised via `send_alert`.
 
 Be thorough but concise. Focus on actionable findings.
