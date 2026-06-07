@@ -12,7 +12,7 @@ def cli() -> None:
 
 
 @cli.command()
-@click.option("--config", default="config.toml", show_default=True, help="Path to config file.")
+@click.option("--config", default="/etc/salt-security-agent/config.toml", show_default=True, help="Path to config file.")
 @click.option("--loglevel", default="INFO", show_default=True, help="Log level.")
 def worker(config: str, loglevel: str) -> None:
     """Start the Celery worker."""
@@ -47,7 +47,7 @@ def beat(config: str, loglevel: str) -> None:
 
 @cli.command()
 @click.argument("minion")
-@click.option("--config", default="config.toml", show_default=True, help="Path to config file.")
+@click.option("--config", default="/etc/salt-security-agent/config.toml", show_default=True, help="Path to config file.")
 def scan(minion: str, config: str) -> None:
     """Scan a specific MINION immediately (enqueued via Celery)."""
     from agent.config import load_config
