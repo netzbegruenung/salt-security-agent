@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
 import click
+
+from agent.config import CONFIG_PATH_ENV_VAR, DEFAULT_CONFIG_PATH
 
 
 @click.group()
@@ -12,12 +15,13 @@ def cli() -> None:
 
 
 @cli.command()
-@click.option("--config", default="/etc/salt-security-agent/config.toml", show_default=True, help="Path to config file.")
+@click.option("--config", default=DEFAULT_CONFIG_PATH, show_default=True, help="Path to config file.")
 @click.option("--loglevel", default="INFO", show_default=True, help="Log level.")
 def worker(config: str, loglevel: str) -> None:
     """Start the Celery worker."""
+    os.environ[CONFIG_PATH_ENV_VAR] = config
     from agent.config import load_config  # noqa: F401 — side-effect: validates config early
-    load_config(config)
+    load_config()
 
     cmd = [
         sys.executable, "-m", "celery",
@@ -29,12 +33,13 @@ def worker(config: str, loglevel: str) -> None:
 
 
 @cli.command()
-@click.option("--config", default="/etc/salt-security-agent/config.toml", show_default=True, help="Path to config file.")
+@click.option("--config", default=DEFAULT_CONFIG_PATH, show_default=True, help="Path to config file.")
 @click.option("--loglevel", default="INFO", show_default=True, help="Log level.")
 def beat(config: str, loglevel: str) -> None:
     """Start the Celery Beat scheduler."""
+    os.environ[CONFIG_PATH_ENV_VAR] = config
     from agent.config import load_config  # noqa: F401
-    load_config(config)
+    load_config()
 
     cmd = [
         sys.executable, "-m", "celery",
@@ -47,11 +52,10 @@ def beat(config: str, loglevel: str) -> None:
 
 @cli.command()
 @click.argument("minion")
-@click.option("--config", default="/etc/salt-security-agent/config.toml", show_default=True, help="Path to config file.")
+@click.option("--config", default=DEFAULT_CONFIG_PATH, show_default=True, help="Path to config file.")
 def scan(minion: str, config: str) -> None:
     """Scan a specific MINION immediately (enqueued via Celery)."""
-    from agent.config import load_config
-    load_config(config)
+    os.environ[CONFIG_PATH_ENV_VAR] = config
 
     from agent.tasks import scan_minion
     result = scan_minion.delay(minion)

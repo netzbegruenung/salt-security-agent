@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+CONFIG_PATH_ENV_VAR = "SALT_SECURITY_AGENT_CONFIG"
+DEFAULT_CONFIG_PATH = "/etc/salt-security-agent/config.toml"
 
 SCAN_PERIOD_SECONDS = {
     "hourly": 3_600,
@@ -63,7 +67,9 @@ class Config:
     smtp: SmtpConfig | None = None
 
 
-def load_config(path: str | Path = "config.toml") -> Config:
+def load_config(path: str | Path | None = None) -> Config:
+    if path is None:
+        path = os.environ.get(CONFIG_PATH_ENV_VAR, DEFAULT_CONFIG_PATH)
     with open(path, "rb") as f:
         raw = tomllib.load(f)
 
