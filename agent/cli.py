@@ -43,3 +43,35 @@ def beat(config: str, loglevel: str) -> None:
         f"--loglevel={loglevel}",
     ]
     subprocess.run(cmd, check=True)
+
+
+@cli.command()
+@click.argument("minion")
+@click.option("--config", default="config.toml", show_default=True, help="Path to config file.")
+@click.option("--background", is_flag=True, default=False, help="Enqueue via Celery instead of running inline.")
+def scan(minion: str, config: str, background: bool) -> None:
+    """Scan a specific MINION immediately."""
+    from agent.config import load_config
+    cfg = load_config(config)
+
+    if background:
+        from agent.tasks import scan_minion
+        result = scan_minion.delay(minion)
+        click.echo(f"Task enqueued. ID: {result.id}")
+        return
+
+    from agent.llm_agent import run_agent
+    from agent.tools.salt_tools import get_processes
+
+    click.echo(f"Fetching processes from {minion}...")
+    processes = get_processes(minion)
+
+    click.echo("Running LLM agent...")
+    report = run_agent(
+        minion=minion,
+        processes=processes,
+        llm_cfg=cfg.llm,
+        salt_cfg=cfg.salt,
+    )
+    click.echo("\n--- Report ---\n")
+    click.echo(report)
