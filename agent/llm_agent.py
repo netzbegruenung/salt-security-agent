@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -248,7 +249,10 @@ def run_agent(
     threat_model = threat_model_path.read_text(encoding="utf-8")
     task = task_path.read_text(encoding="utf-8")
 
+    now = datetime.now(timezone.utc)
     system_prompt = (
+        f"# Current Date and Time\n\n"
+        f"{now.strftime('%Y-%m-%d %H:%M:%S %Z')} (current date: {now.strftime('%Y-%m-%d')})\n\n"
         f"# Threat Model\n\n{threat_model}\n\n"
         "# Output Requirement\n\n"
         "After completing your investigation using the available tools, you MUST produce a "
