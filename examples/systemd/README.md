@@ -12,23 +12,15 @@ Both are needed for normal operation.
 
 ## Prerequisites
 
-1. **Install the package system-wide** so that `/usr/local/bin/salt-security-agent` exists:
+1. **Install the package in a virtual environment**:
 
    ```bash
+   cd /opt/salt-security-agent
+   python3 -m venv venv
    pip install /path/to/salt-security-agent
    ```
 
-   If you install into a virtualenv instead, edit `ExecStart=` in both units
-   to point at the venv's `salt-security-agent` binary (e.g.
-   `/opt/salt-security-agent/venv/bin/salt-security-agent`).
-
-2. **Create a dedicated system user**:
-
-   ```bash
-   useradd --system --home-dir /etc/salt-security-agent --shell /usr/sbin/nologin salt-security-agent
-   ```
-
-3. **Place the config** at `/etc/salt-security-agent/config.toml` (or adjust `--config`
+1. **Place the config** at `/etc/salt-security-agent/config.toml` (or adjust `--config`
    in both `ExecStart` lines). Make sure the `salt-security-agent` user can read it:
 
    ```bash
@@ -36,7 +28,7 @@ Both are needed for normal operation.
    install -o salt-security-agent -g salt-security-agent -m 0640 config.toml /etc/salt-security-agent/config.toml
    ```
 
-4. **Grant Salt CLI access.** The agent calls `salt` and `salt-key`. The
+1. **Grant Salt CLI access.** The agent calls `salt` and `salt-key`. The
    `salt-security-agent` user needs permission to run these — for example by adding it
    to the `salt` group, or via a narrowly scoped `sudoers` rule. Without this,
    minion discovery and process collection will fail.

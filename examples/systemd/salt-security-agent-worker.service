@@ -9,7 +9,7 @@ Type=simple
 User=salt-security-agent
 Group=salt-security-agent
 WorkingDirectory=/etc/salt-security-agent
-ExecStart=/usr/local/bin/salt-security-agent worker --config /etc/salt-security-agent/config.toml --loglevel INFO
+ExecStart=/opt/salt-security-agent/venv/bin/salt-security-agent worker --config /etc/salt-security-agent/config.toml --loglevel INFO
 Restart=on-failure
 RestartSec=5
 
