@@ -25,7 +25,7 @@ from agent.tools.system_tools import (
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 50
+MAX_ITERATIONS = 10
 
 TOOL_DEFINITIONS = [
     {
@@ -259,7 +259,7 @@ def run_agent(
         "Content-Type": "application/json",
     }
 
-    with httpx.Client(timeout=300) as client:
+    with httpx.Client(timeout=120) as client:
         iterations_used = 0
         for iteration in range(MAX_ITERATIONS):
             iterations_used = iteration + 1
