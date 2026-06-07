@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from agent.tools.salt_tools import _salt_run
+import subprocess
+
+from agent.tools.salt_tools import _salt_run, _validate_minion
 
 
 def get_os_info(minion: str) -> str:
@@ -62,7 +64,7 @@ def get_last_logins(minion: str) -> str:
 
 def get_salt_grains(minion: str) -> str:
     """Return Salt grains (system metadata) for the minion."""
-    import subprocess
+    _validate_minion(minion)
     result = subprocess.run(
         ["salt", minion, "grains.items", "--out=yaml"],
         capture_output=True,

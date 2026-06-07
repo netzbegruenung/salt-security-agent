@@ -5,10 +5,29 @@ import smtplib
 from email.message import EmailMessage
 
 from agent.config import SmtpConfig
+from agent.tools.salt_tools import _validate_minion
 
 logger = logging.getLogger(__name__)
 
 VALID_SEVERITIES = {"critical", "high"}
+_MAX_TITLE_LEN = 200
+_MAX_DETAILS_LEN = 8000
+
+
+def _sanitize_single_line(value: str, limit: int) -> str:
+    if not isinstance(value, str):
+        value = str(value)
+    cleaned = "".join(ch for ch in value if ch.isprintable())
+    return cleaned[:limit].strip() or "(empty)"
+
+
+def _sanitize_multiline(value: str, limit: int) -> str:
+    if not isinstance(value, str):
+        value = str(value)
+    cleaned = "".join(
+        ch for ch in value if ch == "\n" or ch == "\t" or ch.isprintable()
+    )
+    return cleaned[:limit].strip() or "(empty)"
 
 
 def send_alert(
@@ -19,9 +38,12 @@ def send_alert(
     smtp_cfg: SmtpConfig | None = None,
 ) -> str:
     """Emit a security alert. Logs always; sends e-mail when SMTP is configured."""
-    severity = severity.lower().strip()
+    _validate_minion(minion)
+    severity = severity.lower().strip() if isinstance(severity, str) else ""
     if severity not in VALID_SEVERITIES:
         severity = "high"
+    title = _sanitize_single_line(title, _MAX_TITLE_LEN)
+    details = _sanitize_multiline(details, _MAX_DETAILS_LEN)
 
     logger.critical(
         "ALERT [%s] minion=%s title=%s\n%s",
