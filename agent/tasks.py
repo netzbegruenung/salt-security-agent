@@ -33,6 +33,7 @@ def scan_minion(self, minion: str) -> str:
         )
         mark_scanned(cfg.celery.broker_url, minion)
         logger.info("Scan complete for minion %s.", minion)
+        print(f"\n--- Report: {minion} ---\n\n{report}\n", flush=True)
         return report
     except Exception as exc:
         release_minion(cfg.celery.broker_url, minion)
