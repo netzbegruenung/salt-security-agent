@@ -79,6 +79,18 @@ result_backend = "redis://localhost:6379/0"
 
 Both paths are resolved relative to the current working directory if not absolute.
 
+#### Per-minion overrides
+
+Before each scan, the agent looks for a minion-specific file alongside the configured
+default and uses it if present:
+
+- `<threat_model_path dir>/<minion>.md` — overrides the threat model for that minion.
+- `<task_path dir>/<minion>.md` — overrides the task for that minion.
+
+If no per-minion file exists, the configured default is used. For example, with the
+default config above, a minion named `web-01` would pick up
+`threat_models/web-01.md` and `tasks/web-01.md` when those files exist.
+
 ## Usage
 
 Start the Celery worker (handles actual scans):

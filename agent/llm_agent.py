@@ -226,14 +226,24 @@ def _call_tool(
     return f"Unknown tool: {name}"
 
 
+def _resolve_for_minion(default_path: Path, minion: str) -> Path:
+    candidate = Path(default_path).parent / f"{minion}.md"
+    if candidate.is_file():
+        logger.info("Using per-minion file %s", candidate)
+        return candidate
+    return Path(default_path)
+
+
 def run_agent(
     minion: str,
     processes: str,
     llm_cfg: LLMConfig,
     salt_cfg: SaltConfig,
 ) -> str:
-    threat_model = Path(llm_cfg.threat_model_path).read_text(encoding="utf-8")
-    task = Path(llm_cfg.task_path).read_text(encoding="utf-8")
+    threat_model_path = _resolve_for_minion(llm_cfg.threat_model_path, minion)
+    task_path = _resolve_for_minion(llm_cfg.task_path, minion)
+    threat_model = threat_model_path.read_text(encoding="utf-8")
+    task = task_path.read_text(encoding="utf-8")
 
     system_prompt = (
         f"# Threat Model\n\n{threat_model}\n\n"
