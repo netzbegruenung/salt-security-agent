@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+import logging
+
+from agent.celery_app import app, cfg
+from agent.llm_agent import run_agent
+from agent.scheduler import mark_scanned, pick_next_minion, release_minion
+from agent.tools.salt_tools import get_processes
+
+logger = logging.getLogger(__name__)
+
+
+@app.task(name="agent.tasks.dispatch_scans")
+def dispatch_scans() -> None:
+    minion = pick_next_minion(cfg.celery.broker_url)
+    if minion is None:
+        logger.info("No minion available to scan (all in progress or none accepted).")
+        return
+    logger.info("Dispatching scan for minion: %s", minion)
+    scan_minion.delay(minion)
+
+
+@app.task(name="agent.tasks.scan_minion", bind=True, max_retries=2)
+def scan_minion(self, minion: str) -> str:
+    logger.info("Starting scan of minion: %s", minion)
+    try:
+        processes = get_processes(minion)
+        report = run_agent(
+            minion=minion,
+            processes=processes,
+            llm_cfg=cfg.llm,
+            salt_cfg=cfg.salt,
+        )
+        mark_scanned(cfg.celery.broker_url, minion)
+        logger.info("Scan complete for minion %s.", minion)
+        return report
+    except Exception as exc:
+        release_minion(cfg.celery.broker_url, minion)
+        logger.exception("Scan failed for minion %s: %s", minion, exc)
+        raise self.retry(exc=exc, countdown=60)

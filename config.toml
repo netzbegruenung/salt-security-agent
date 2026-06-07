@@ -1,0 +1,17 @@
+[scanning]
+parallel_hosts = 3
+tasks_per_hour = 10
+
+[llm]
+url = "https://api.openai.com/v1"
+access_token = "sk-changeme"
+model = "gpt-4o"
+threat_model_path = "threat_models/default_threat_model.md"
+task_path = "tasks/default_task.md"
+
+[salt]
+repo_path = "/srv/salt"
+
+[celery]
+broker_url = "redis://localhost:6379/0"
+result_backend = "redis://localhost:6379/0"
