@@ -6,8 +6,8 @@ scan_period = "daily"  # how often each minion is scanned: hourly, daily, weekly
 url = "https://api.openai.com/v1"
 access_token = "sk-changeme"
 model = "gpt-4o"
-threat_model_path = "threat_models/default_threat_model.md"
-task_path = "tasks/default_task.md"
+threat_model_path = "threat_models/"
+task_path = "tasks/"
 
 [salt]
 repo_path = "/srv/salt"

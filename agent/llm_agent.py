@@ -231,7 +231,7 @@ def _resolve_for_minion(default_path: Path, minion: str) -> Path:
     if candidate.is_file():
         logger.info("Using per-minion file %s", candidate)
         return candidate
-    return Path(default_path)
+    return Path(default_path / "default.md")
 
 
 def run_agent(
