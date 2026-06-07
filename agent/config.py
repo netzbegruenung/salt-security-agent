@@ -43,11 +43,23 @@ class CeleryConfig:
 
 
 @dataclass
+class SmtpConfig:
+    host: str
+    port: int
+    username: str
+    password: str
+    from_address: str
+    to_address: str
+    use_tls: bool = True
+
+
+@dataclass
 class Config:
     scanning: ScanningConfig
     llm: LLMConfig
     salt: SaltConfig
     celery: CeleryConfig
+    smtp: SmtpConfig | None = None
 
 
 def load_config(path: str | Path = "config.toml") -> Config:
@@ -64,6 +76,19 @@ def load_config(path: str | Path = "config.toml") -> Config:
         raise ValueError(
             f"scanning.scan_period must be one of {sorted(SCAN_PERIOD_SECONDS)}, "
             f"got {scan_period!r}"
+        )
+
+    smtp_cfg: SmtpConfig | None = None
+    if "smtp" in raw:
+        smtp = raw["smtp"]
+        smtp_cfg = SmtpConfig(
+            host=smtp["host"],
+            port=int(smtp["port"]),
+            username=smtp["username"],
+            password=smtp["password"],
+            from_address=smtp["from_address"],
+            to_address=smtp["to_address"],
+            use_tls=bool(smtp.get("use_tls", True)),
         )
 
     return Config(
@@ -85,4 +110,5 @@ def load_config(path: str | Path = "config.toml") -> Config:
             broker_url=c["broker_url"],
             result_backend=c["result_backend"],
         ),
+        smtp=smtp_cfg,
     )

@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from agent.config import LLMConfig, SaltConfig
+from agent.config import LLMConfig, SaltConfig, SmtpConfig
 from agent.tools.alert_tool import send_alert
 from agent.tools.repo_tools import list_repo_files, read_repo_file
 from agent.tools.salt_tools import ls_minion
@@ -190,6 +190,7 @@ def _call_tool(
     arguments: dict[str, Any],
     minion: str,
     salt_cfg: SaltConfig,
+    smtp_cfg: SmtpConfig | None,
 ) -> str:
     if name == "ls_minion":
         return ls_minion(minion, arguments["path"])
@@ -222,6 +223,7 @@ def _call_tool(
             severity=arguments["severity"],
             title=arguments["title"],
             details=arguments["details"],
+            smtp_cfg=smtp_cfg,
         )
     return f"Unknown tool: {name}"
 
@@ -239,6 +241,7 @@ def run_agent(
     processes: str,
     llm_cfg: LLMConfig,
     salt_cfg: SaltConfig,
+    smtp_cfg: SmtpConfig | None = None,
 ) -> str:
     threat_model_path = _resolve_for_minion(llm_cfg.threat_model_path, minion)
     task_path = _resolve_for_minion(llm_cfg.task_path, minion)
@@ -298,7 +301,7 @@ def run_agent(
                 logger.debug("Tool call: %s(%s)", name, arguments)
 
                 try:
-                    result = _call_tool(name, arguments, minion, salt_cfg)
+                    result = _call_tool(name, arguments, minion, salt_cfg, smtp_cfg)
                 except Exception as exc:
                     result = f"ERROR: {exc}"
 

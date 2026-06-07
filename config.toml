@@ -15,3 +15,13 @@ repo_path = "/srv/salt"
 [celery]
 broker_url = "redis://localhost:6379/0"
 result_backend = "redis://localhost:6379/0"
+
+# Optional. If present, alerts are also delivered by e-mail.
+# [smtp]
+# host = "smtp.example.com"
+# port = 587
+# username = "alerts@example.com"
+# password = "changeme"
+# from_address = "alerts@example.com"
+# to_address = "soc@example.com"
+# use_tls = true  # STARTTLS on the given port; set false for implicit TLS on 465

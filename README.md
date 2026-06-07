@@ -70,6 +70,17 @@ repo_path = "/srv/salt"   # Absolute path to the Salt state repository on the ma
 [celery]
 broker_url = "redis://localhost:6379/0"
 result_backend = "redis://localhost:6379/0"
+
+# Optional. If present, alerts emitted by the agent's send_alert tool are also
+# delivered by e-mail using authenticated SMTP. Omit the entire section to disable.
+[smtp]
+host = "smtp.example.com"
+port = 587
+username = "alerts@example.com"
+password = "changeme"
+from_address = "alerts@example.com"
+to_address = "soc@example.com"
+use_tls = true  # STARTTLS; set false for implicit TLS (typically port 465)
 ```
 
 ### Threat model and task
