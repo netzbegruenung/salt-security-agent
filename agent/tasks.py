@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 from agent.celery_app import app, cfg
 from agent.llm_agent import run_agent
@@ -34,7 +35,13 @@ def scan_minion(self, minion: str) -> str:
         )
         mark_scanned(cfg.celery.broker_url, minion)
         logger.info("Scan complete for minion %s.", minion)
-        print(f"\n--- Report: {minion} ---\n\n{report}\n", flush=True)
+        if cfg.scanning.report_directory is not None:
+            report_path = cfg.scanning.report_directory / date.today().isoformat() / minion
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(report, encoding="utf-8")
+            logger.info("Wrote report for minion %s to %s.", minion, report_path)
+        else:
+            print(f"\n--- Report: {minion} ---\n\n{report}\n", flush=True)
         return report
     except Exception as exc:
         release_minion(cfg.celery.broker_url, minion)

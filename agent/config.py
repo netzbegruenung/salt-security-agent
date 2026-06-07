@@ -16,6 +16,7 @@ SCAN_PERIOD_SECONDS = {
 class ScanningConfig:
     parallel_hosts: int
     scan_period: str
+    report_directory: Path | None = None
 
     @property
     def scan_period_seconds(self) -> int:
@@ -91,10 +92,12 @@ def load_config(path: str | Path = "config.toml") -> Config:
             use_tls=bool(smtp.get("use_tls", True)),
         )
 
+    report_directory = s.get("report_directory")
     return Config(
         scanning=ScanningConfig(
             parallel_hosts=s["parallel_hosts"],
             scan_period=scan_period,
+            report_directory=Path(report_directory) if report_directory else None,
         ),
         llm=LLMConfig(
             url=l["url"].rstrip("/"),

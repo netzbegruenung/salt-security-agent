@@ -56,6 +56,7 @@ Copy and edit `config.toml`:
 [scanning]
 parallel_hosts = 3            # Celery worker concurrency
 scan_period = "daily"         # how often each minion is scanned: hourly, daily, weekly, monthly
+# report_directory = "/var/lib/salt-security-agent/reports"  # Optional; see Reports section
 
 [llm]
 url = "https://api.openai.com/v1"
@@ -103,6 +104,14 @@ default and uses it if present:
 If no per-minion file exists, the configured default is used. For example, with the
 default config above, a minion named `web-01` would pick up
 `threat_models/web-01.md` and `tasks/web-01.md` when those files exist.
+
+### Reports
+
+By default, scan reports are written to the worker's stdout. Set `scanning.report_directory`
+to persist them on disk instead. Each report is written to
+`{report_directory}/{isodate}/{minion_id}` (e.g. `/var/lib/salt-security-agent/reports/2026-06-07/web-01`).
+Parent directories are created automatically; re-running a scan on the same day overwrites the
+previous report for that minion.
 
 ## Usage
 

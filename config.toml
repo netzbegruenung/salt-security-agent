@@ -1,6 +1,9 @@
 [scanning]
 parallel_hosts = 3
 scan_period = "daily"  # how often each minion is scanned: hourly, daily, weekly, monthly
+# Optional. If set, reports are written to {report_directory}/{isodate}/{minion_id}
+# instead of being printed to stdout.
+# report_directory = "/var/lib/salt-security-agent/reports"
 
 [llm]
 url = "https://api.openai.com/v1"
