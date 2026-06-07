@@ -95,7 +95,14 @@ def run_agent(
     threat_model = Path(llm_cfg.threat_model_path).read_text(encoding="utf-8")
     task = Path(llm_cfg.task_path).read_text(encoding="utf-8")
 
-    system_prompt = f"# Threat Model\n\n{threat_model}"
+    system_prompt = (
+        f"# Threat Model\n\n{threat_model}\n\n"
+        "# Output Requirement\n\n"
+        "After completing your investigation using the available tools, you MUST produce a "
+        "written Markdown report as your final response. The report must summarise every "
+        "finding with evidence, risk assessment, and recommended remediation. "
+        "Do not stop without writing this report."
+    )
     user_message = (
         f"# Task\n\n{task}\n\n"
         f"# Target Minion\n\n{minion}\n\n"
@@ -134,8 +141,22 @@ def run_agent(
             messages.append(message)
 
             if choice["finish_reason"] != "tool_calls":
-                logger.info("Agent finished after %d iteration(s).", iteration + 1)
-                return message.get("content") or ""
+                content = message.get("content") or ""
+                if content:
+                    logger.info("Agent finished after %d iteration(s).", iteration + 1)
+                    return content
+                # Model stopped without writing a report — explicitly request it.
+                logger.warning("Model returned empty content; requesting final report.")
+                messages.append({"role": "user", "content": "Investigation complete. Write your full findings report now."})
+                final_response = client.post(
+                    f"{llm_cfg.url}/chat/completions",
+                    headers=headers,
+                    json={"model": llm_cfg.model, "messages": messages, "tool_choice": "none"},
+                )
+                final_response.raise_for_status()
+                final_content = final_response.json()["choices"][0]["message"].get("content") or ""
+                logger.info("Agent finished after %d iteration(s) (+ recovery call).", iteration + 1)
+                return final_content
 
             for tool_call in message.get("tool_calls", []):
                 fn = tool_call["function"]
