@@ -6,10 +6,10 @@ Wants=redis.service
 
 [Service]
 Type=simple
-User=salt-agent
-Group=salt-agent
-WorkingDirectory=/etc/salt-agent
-ExecStart=/usr/local/bin/salt-agent worker --config /etc/salt-agent/config.toml --loglevel INFO
+User=salt-security-agent
+Group=salt-security-agent
+WorkingDirectory=/etc/salt-security-agent
+ExecStart=/usr/local/bin/salt-security-agent worker --config /etc/salt-security-agent/config.toml --loglevel INFO
 Restart=on-failure
 RestartSec=5
 
@@ -18,13 +18,13 @@ KillMode=mixed
 TimeoutStopSec=30
 
 # Hardening. The salt CLI (salt, salt-key) and the Salt state repo
-# (config: [salt].repo_path) must be reachable for the salt-agent user.
+# (config: [salt].repo_path) must be reachable for the salt-security-agent user.
 # Extend ReadWritePaths / ReadOnlyPaths as needed for your environment.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/etc/salt-agent
+ReadWritePaths=/etc/salt-security-agent
 
 [Install]
 WantedBy=multi-user.target

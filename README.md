@@ -98,13 +98,13 @@ default config above, a minion named `web-01` would pick up
 Start the Celery worker (handles actual scans):
 
 ```bash
-salt-agent worker
+salt-security-agent worker
 ```
 
 Start the Celery Beat scheduler (dispatches scans at the configured rate):
 
 ```bash
-salt-agent beat
+salt-security-agent beat
 ```
 
 Run both in separate terminals (or use a process supervisor like systemd or supervisord).
@@ -113,8 +113,8 @@ Example systemd units are provided under `examples/systemd/`.
 Optional flags:
 
 ```bash
-salt-agent worker --config /etc/salt-agent/config.toml --loglevel DEBUG
-salt-agent beat   --config /etc/salt-agent/config.toml --loglevel INFO
+salt-security-agent worker --config /etc/salt-security-agent/config.toml --loglevel DEBUG
+salt-security-agent beat   --config /etc/salt-security-agent/config.toml --loglevel INFO
 ```
 
 ## File layout

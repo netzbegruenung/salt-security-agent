@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-salt-agent = "agent.cli:cli"
+salt-security-agent = "agent.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
