@@ -1,6 +1,6 @@
 [scanning]
 parallel_hosts = 3
-tasks_per_hour = 10
+scan_period = "daily"  # how often each minion is scanned: hourly, daily, weekly, monthly
 
 [llm]
 url = "https://api.openai.com/v1"

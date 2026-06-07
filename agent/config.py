@@ -4,11 +4,22 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+SCAN_PERIOD_SECONDS = {
+    "hourly": 3_600,
+    "daily": 86_400,
+    "weekly": 604_800,
+    "monthly": 2_592_000,
+}
+
 
 @dataclass
 class ScanningConfig:
     parallel_hosts: int
-    tasks_per_hour: int
+    scan_period: str
+
+    @property
+    def scan_period_seconds(self) -> int:
+        return SCAN_PERIOD_SECONDS[self.scan_period]
 
 
 @dataclass
@@ -48,10 +59,17 @@ def load_config(path: str | Path = "config.toml") -> Config:
     salt = raw["salt"]
     c = raw["celery"]
 
+    scan_period = s["scan_period"]
+    if scan_period not in SCAN_PERIOD_SECONDS:
+        raise ValueError(
+            f"scanning.scan_period must be one of {sorted(SCAN_PERIOD_SECONDS)}, "
+            f"got {scan_period!r}"
+        )
+
     return Config(
         scanning=ScanningConfig(
             parallel_hosts=s["parallel_hosts"],
-            tasks_per_hour=s["tasks_per_hour"],
+            scan_period=scan_period,
         ),
         llm=LLMConfig(
             url=l["url"].rstrip("/"),

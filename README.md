@@ -26,10 +26,12 @@ Celery Beat ──► dispatch_scans (task)
 ```
 
 - **Broker & state**: Redis
-- **Scheduling**: Celery Beat fires `dispatch_scans` at the configured rate; worker
+- **Scheduling**: Celery Beat ticks `dispatch_scans` once a minute; each tick scans the
+  oldest minion whose last scan is older than the configured `scan_period`. Worker
   concurrency limits parallel scans.
 - **Minion selection**: Redis sorted set (`salt:scanned`) tracks last-scan timestamps.
-  The minion with the oldest (or absent) timestamp is always selected next.
+  The oldest-scanned minion whose timestamp is older than the scan period is selected;
+  never-scanned minions are always eligible.
 - **LLM communication**: Raw HTTP via `httpx` to any OpenAI-compatible chat completions
   endpoint.
 
@@ -52,8 +54,8 @@ Copy and edit `config.toml`:
 
 ```toml
 [scanning]
-parallel_hosts = 3        # Celery worker concurrency
-tasks_per_hour = 10       # How many minion scans to dispatch per hour
+parallel_hosts = 3            # Celery worker concurrency
+scan_period = "daily"         # how often each minion is scanned: hourly, daily, weekly, monthly
 
 [llm]
 url = "https://api.openai.com/v1"
@@ -139,9 +141,17 @@ salt-security-agent/
 ## How minion selection works
 
 All accepted minions are discovered via `salt-key -L --out=json`. Redis stores each
-minion's last-scan Unix timestamp in a sorted set. On each `dispatch_scans` invocation:
+minion's last-scan Unix timestamp in a sorted set. `dispatch_scans` runs once a minute
+and:
 
-1. Minions currently being scanned (`salt:in_progress`) are excluded.
-2. The remaining minion with the lowest score (oldest scan or never scanned) is chosen.
-3. It is added to `salt:in_progress` with a 1-hour TTL (auto-released if the worker dies).
-4. After a successful scan, the timestamp is updated and the lock is released.
+1. Excludes minions currently being scanned (`salt:in_progress`).
+2. Filters to minions that are *overdue* — last scan older than `scan_period`, or never
+   scanned at all.
+3. Picks the one with the oldest timestamp from the overdue set; if none are overdue,
+   the tick is a no-op.
+4. Adds the chosen minion to `salt:in_progress` with a 1-hour TTL (auto-released if the
+   worker dies).
+5. After a successful scan, the timestamp is updated and the lock is released.
+
+With N minions, this naturally yields ~N scans per scan period, spread across the
+period. Burst capacity is bounded by `parallel_hosts` (worker concurrency).

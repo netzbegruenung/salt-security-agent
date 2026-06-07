@@ -21,7 +21,7 @@ app.conf.update(
     beat_schedule={
         "dispatch-scans": {
             "task": "agent.tasks.dispatch_scans",
-            "schedule": schedule(run_every=3600 / cfg.scanning.tasks_per_hour),
+            "schedule": schedule(run_every=60),
         },
     },
 )

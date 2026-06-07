@@ -26,8 +26,12 @@ def _list_accepted_minions() -> list[str]:
     return data.get("minions", [])
 
 
-def pick_next_minion(broker_url: str) -> str | None:
-    """Return the minion with the oldest (or absent) scan timestamp that is not in progress."""
+def pick_next_minion(broker_url: str, scan_period_seconds: int) -> str | None:
+    """Return the oldest-scanned minion whose last scan is older than the period.
+
+    Minions that have never been scanned are always eligible. Minions currently
+    being scanned are excluded.
+    """
     r = _redis_client(broker_url)
     minions = _list_accepted_minions()
     if not minions:
@@ -40,11 +44,17 @@ def pick_next_minion(broker_url: str) -> str | None:
         return None
 
     scores = r.zmscore(SCANNED_KEY, candidates)
-    # pair each candidate with its score (None = never scanned → treat as 0)
-    paired = [(m, s if s is not None else 0.0) for m, s in zip(candidates, scores)]
-    paired.sort(key=lambda x: x[1])
+    cutoff = time.time() - scan_period_seconds
+    overdue = [
+        (m, s if s is not None else 0.0)
+        for m, s in zip(candidates, scores)
+        if s is None or s < cutoff
+    ]
+    if not overdue:
+        return None
+    overdue.sort(key=lambda x: x[1])
 
-    chosen = paired[0][0]
+    chosen = overdue[0][0]
     r.sadd(IN_PROGRESS_KEY, chosen)
     r.expire(IN_PROGRESS_KEY, IN_PROGRESS_TTL)
     return chosen
