@@ -21,17 +21,12 @@ Both are needed for normal operation.
    ```
 
 1. **Place the config** at `/etc/salt-security-agent/config.toml` (or adjust `--config`
-   in both `ExecStart` lines). Make sure the `salt-security-agent` user can read it:
+   in both `ExecStart` lines).
 
    ```bash
    install -d -o salt-security-agent -g salt-security-agent -m 0750 /etc/salt-security-agent
    install -o salt-security-agent -g salt-security-agent -m 0640 config.toml /etc/salt-security-agent/config.toml
    ```
-
-1. **Grant Salt CLI access.** The agent calls `salt` and `salt-key`. The
-   `salt-security-agent` user needs permission to run these — for example by adding it
-   to the `salt` group, or via a narrowly scoped `sudoers` rule. Without this,
-   minion discovery and process collection will fail.
 
 ## Install
 

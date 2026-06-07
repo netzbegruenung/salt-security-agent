@@ -6,8 +6,8 @@ Wants=redis.service
 
 [Service]
 Type=simple
-User=salt-security-agent
-Group=salt-security-agent
+User=root
+Group=root
 WorkingDirectory=/etc/salt-security-agent
 ExecStart=/opt/salt-security-agent/venv/bin/salt-security-agent beat --config /etc/salt-security-agent/config.toml --loglevel INFO
 Restart=on-failure
@@ -22,8 +22,8 @@ TimeoutStopSec=30
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=/etc/salt-security-agent
+ReadOnlyPaths=/etc/salt-security-agent /srv/salt-security-agent
+ReadWritePaths=/srv/salt-security-reports /root/.local
 
 [Install]
 WantedBy=multi-user.target
