@@ -108,6 +108,7 @@ salt-agent beat
 ```
 
 Run both in separate terminals (or use a process supervisor like systemd or supervisord).
+Example systemd units are provided under `examples/systemd/`.
 
 Optional flags:
 

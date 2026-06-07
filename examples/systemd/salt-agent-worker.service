@@ -1,0 +1,30 @@
+[Unit]
+Description=Salt Security Agent - Celery worker
+Documentation=https://github.com/
+After=network.target redis.service
+Wants=redis.service
+
+[Service]
+Type=simple
+User=salt-agent
+Group=salt-agent
+WorkingDirectory=/etc/salt-agent
+ExecStart=/usr/local/bin/salt-agent worker --config /etc/salt-agent/config.toml --loglevel INFO
+Restart=on-failure
+RestartSec=5
+
+# Give Celery time to finish in-flight scans before being killed.
+KillMode=mixed
+TimeoutStopSec=30
+
+# Hardening. The salt CLI (salt, salt-key) and the Salt state repo
+# (config: [salt].repo_path) must be reachable for the salt-agent user.
+# Extend ReadWritePaths / ReadOnlyPaths as needed for your environment.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/salt-agent
+
+[Install]
+WantedBy=multi-user.target
