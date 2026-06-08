@@ -66,7 +66,7 @@ def create_report(
     else:
         for idx, finding in enumerate(rendered, 1):
             lines.extend([
-                f"### {idx}. {f['title']} ({f['severity'].upper()})",
+                f"### {idx}. {finding['title']} ({finding['severity'].upper()})",
                 "",
                 "- **Evidence:** {finding['evidence']}",
                 "- **Risk:** {finding['risk']}",
