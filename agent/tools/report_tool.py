@@ -68,9 +68,9 @@ def create_report(
             lines.extend([
                 f"### {idx}. {finding['title']} ({finding['severity'].upper()})",
                 "",
-                "- **Evidence:** {finding['evidence']}",
-                "- **Risk:** {finding['risk']}",
-                "- **Recommendation: ** {finding['recommendation']}",
+                f"- **Evidence:** {finding['evidence']}",
+                f"- **Risk:** {finding['risk']}",
+                f"- **Recommendation:** {finding['recommendation']}",
                 "",
             ])
     return "\n".join(lines).rstrip() + "\n"
