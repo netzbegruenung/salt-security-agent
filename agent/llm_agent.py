@@ -11,6 +11,7 @@ import httpx
 from agent.config import LLMConfig, SaltConfig, SmtpConfig
 from agent.tools.alert_tool import send_alert
 from agent.tools.repo_tools import list_repo_files, read_repo_file, grep_repo
+from agent.tools.report_tool import create_report
 from agent.tools.salt_tools import ls_minion
 from agent.tools.system_tools import (
     get_cron_jobs,
@@ -181,6 +182,63 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "create_report",
+            "description": (
+                "Submit the final findings report. Call this exactly once at the end of your "
+                "investigation. The report is rendered into a consistent Markdown structure "
+                "from the fields you provide here — do not write the report as free-form text."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Executive summary of the investigation and the minion's overall security posture.",
+                    },
+                    "overall_risk": {
+                        "type": "string",
+                        "enum": ["none", "low", "medium", "high", "critical"],
+                        "description": "Overall risk level for this minion based on the findings.",
+                    },
+                    "findings": {
+                        "type": "array",
+                        "description": "List of individual findings. May be empty if nothing of note was discovered.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {
+                                    "type": "string",
+                                    "description": "Short headline of the finding (one line).",
+                                },
+                                "severity": {
+                                    "type": "string",
+                                    "enum": ["info", "low", "medium", "high", "critical"],
+                                    "description": "Severity of this individual finding.",
+                                },
+                                "evidence": {
+                                    "type": "string",
+                                    "description": "Concrete evidence: file paths, command output, configuration excerpts, etc.",
+                                },
+                                "risk": {
+                                    "type": "string",
+                                    "description": "Why this matters and what the potential impact is.",
+                                },
+                                "recommendation": {
+                                    "type": "string",
+                                    "description": "Recommended remediation or mitigation.",
+                                },
+                            },
+                            "required": ["title", "severity", "evidence", "risk", "recommendation"],
+                        },
+                    },
+                },
+                "required": ["summary", "overall_risk", "findings"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "send_alert",
             "description": (
                 "Dispatch a security alert for an extremely critical deviation or a strong "
@@ -248,6 +306,13 @@ def _call_tool(
         return get_last_logins(minion)
     if name == "get_salt_grains":
         return get_salt_grains(minion)
+    if name == "create_report":
+        return create_report(
+            minion=minion,
+            summary=arguments.get("summary", ""),
+            overall_risk=arguments.get("overall_risk", ""),
+            findings=arguments.get("findings"),
+        )
     if name == "send_alert":
         return send_alert(
             minion=minion,
@@ -285,10 +350,11 @@ def run_agent(
         f"{now.strftime('%Y-%m-%d %H:%M:%S %Z')} (current date: {now.strftime('%Y-%m-%d')})\n\n"
         f"# Threat Model\n\n{threat_model}\n\n"
         "# Output Requirement\n\n"
-        "After completing your investigation using the available tools, you MUST produce a "
-        "written Markdown report as your final response. The report must summarise every "
-        "finding with evidence, risk assessment, and recommended remediation. "
-        "Do not stop without writing this report."
+        "After completing your investigation using the available tools, you MUST call the "
+        "`create_report` tool exactly once with structured findings (summary, overall_risk, "
+        "and a list of findings — each with title, severity, evidence, risk, recommendation). "
+        "Do not write the report as a free-form message; it is rendered from the fields you "
+        "pass to `create_report`. Do not stop without calling this tool."
     )
     user_message = (
         f"# Task\n\n{task}\n\n"
@@ -305,6 +371,8 @@ def run_agent(
         "Authorization": f"Bearer {llm_cfg.access_token}",
         "Content-Type": "application/json",
     }
+
+    report: str | None = None
 
     with httpx.Client(timeout=300) as client:
         iterations_used = 0
@@ -339,32 +407,65 @@ def run_agent(
                 except Exception as exc:
                     result = f"ERROR: {exc}"
 
+                if name == "create_report":
+                    report = result
+                    tool_content = "Report recorded. End your turn now."
+                else:
+                    tool_content = result
+
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call["id"],
-                        "content": result,
+                        "content": tool_content,
                     }
                 )
+
+            if report is not None:
+                break
         else:
             logger.warning("Agent reached max iterations (%d) for minion %s.", MAX_ITERATIONS, minion)
 
-        logger.info("Tool loop ended after %d iteration(s); generating final report.", iterations_used)
+        if report is not None:
+            logger.info("Report received via create_report after %d iteration(s).", iterations_used)
+            return report
+
+        logger.warning(
+            "Agent did not call create_report after %d iteration(s); forcing a final call.",
+            iterations_used,
+        )
         messages.append({
             "role": "user",
             "content": (
-                "Your investigation is complete. Now write the final findings report in "
-                "Markdown. Include every finding with evidence, risk, and recommendation. "
-                "Respond with the report only — no preamble, no tool calls."
+                "Your investigation is complete. Call the `create_report` tool now with the "
+                "structured findings. Do not respond with text — only call the tool."
             ),
         })
-        report_response = client.post(
+        forced_response = client.post(
             f"{llm_cfg.url}/chat/completions",
             headers=headers,
-            json={"model": llm_cfg.model, "messages": messages},
+            json={
+                "model": llm_cfg.model,
+                "messages": messages,
+                "tools": TOOL_DEFINITIONS,
+                "tool_choice": {"type": "function", "function": {"name": "create_report"}},
+            },
         )
-        report_response.raise_for_status()
-        report = report_response.json()["choices"][0]["message"].get("content") or ""
-        if not report:
-            logger.error("Final report call returned empty content for minion %s.", minion)
-        return report
+        forced_response.raise_for_status()
+        forced_message = forced_response.json()["choices"][0]["message"]
+        for tool_call in forced_message.get("tool_calls") or []:
+            if tool_call["function"]["name"] != "create_report":
+                continue
+            try:
+                arguments = json.loads(tool_call["function"].get("arguments", "{}"))
+            except json.JSONDecodeError:
+                continue
+            return create_report(
+                minion=minion,
+                summary=arguments.get("summary", ""),
+                overall_risk=arguments.get("overall_risk", ""),
+                findings=arguments.get("findings"),
+            )
+
+        logger.error("Agent failed to produce a report for minion %s.", minion)
+        return ""
