@@ -64,21 +64,13 @@ def create_report(
     if not rendered:
         lines.append("No findings.")
     else:
-        for idx, f in enumerate(rendered, 1):
+        for idx, finding in enumerate(rendered, 1):
             lines.extend([
                 f"### {idx}. {f['title']} ({f['severity'].upper()})",
                 "",
-                "**Evidence**",
-                "",
-                f["evidence"],
-                "",
-                "**Risk**",
-                "",
-                f["risk"],
-                "",
-                "**Recommendation**",
-                "",
-                f["recommendation"],
+                "- **Evidence:** {finding['evidence']}",
+                "- **Risk:** {finding['risk']}",
+                "- **Recommendation: ** {finding['recommendation']}",
                 "",
             ])
     return "\n".join(lines).rstrip() + "\n"
