@@ -87,7 +87,7 @@ def _send_mail(
         f"{details}\n"
     )
 
-    if cfg.use_tls:
+    if cfg.use_starttls:
         with smtplib.SMTP(cfg.host, cfg.port, timeout=30) as client:
             client.starttls()
             client.login(cfg.username, cfg.password)

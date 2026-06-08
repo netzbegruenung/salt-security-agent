@@ -27,4 +27,4 @@ result_backend = "redis://localhost:6379/0"
 # password = "changeme"
 # from_address = "alerts@example.com"
 # to_address = "soc@example.com"
-# use_tls = true  # STARTTLS on the given port; set false for implicit TLS on 465
+# use_starttls = true  # STARTTLS on the given port; set false for implicit TLS / SMTPS on 465

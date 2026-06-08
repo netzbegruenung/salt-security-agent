@@ -55,7 +55,7 @@ class SmtpConfig:
     password: str
     from_address: str
     to_address: str
-    use_tls: bool = True
+    use_starttls: bool = True
 
 
 @dataclass
@@ -95,7 +95,7 @@ def load_config(path: str | Path | None = None) -> Config:
             password=smtp["password"],
             from_address=smtp["from_address"],
             to_address=smtp["to_address"],
-            use_tls=bool(smtp.get("use_tls", True)),
+            use_starttls=bool(smtp.get("use_starttls", True)),
         )
 
     report_directory = s.get("report_directory")

@@ -81,7 +81,7 @@ username = "alerts@example.com"
 password = "changeme"
 from_address = "alerts@example.com"
 to_address = "soc@example.com"
-use_tls = true  # STARTTLS; set false for implicit TLS (typically port 465)
+use_starttls = true  # STARTTLS; set false for implicit TLS / SMTPS (typically port 465)
 ```
 
 ### Threat model and task
