@@ -10,7 +10,7 @@ import httpx
 
 from agent.config import LLMConfig, SaltConfig, SmtpConfig
 from agent.tools.alert_tool import send_alert
-from agent.tools.repo_tools import list_repo_files, read_repo_file
+from agent.tools.repo_tools import list_repo_files, read_repo_file, grep_repo
 from agent.tools.salt_tools import ls_minion
 from agent.tools.system_tools import (
     get_cron_jobs,
@@ -77,6 +77,32 @@ TOOL_DEFINITIONS = [
                     }
                 },
                 "required": ["rel_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grep_repo",
+            "description": (
+                "Recursively search for a text pattern in files within the Salt repository. "
+                "Returns matched lines with filename, line number, and content. "
+                "Use rel_path=''' to search from repo root, or specify a subdirectory. "
+                "Search is case-insensitive."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Text pattern to search for (case-insensitive).",
+                    },
+                    "rel_path": {
+                        "type": "string",
+                        "description": "Relative subdirectory to search within. Use empty string for root.",
+                    },
+                },
+                "required": ["pattern"],
             },
         },
     },
@@ -200,6 +226,10 @@ def _call_tool(
         return "\n".join(entries)
     if name == "read_repo_file":
         return read_repo_file(salt_cfg.repo_path, arguments["rel_path"])
+    if name == "grep_repo":
+        pattern = arguments["pattern"]
+        rel_path = arguments.get("rel_path", "")
+        return grep_repo(salt_cfg.repo_path, pattern, rel_path)
     if name == "get_os_info":
         return get_os_info(minion)
     if name == "get_listening_ports":
