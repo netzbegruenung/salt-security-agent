@@ -7,6 +7,9 @@ import subprocess
 _MINION_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _MAX_MINION_LEN = 253
 
+SALT_CLI_TIMEOUT = 45
+SUBPROCESS_TIMEOUT = 90
+
 
 def _validate_minion(minion: str) -> str:
     if (
@@ -21,10 +24,10 @@ def _validate_minion(minion: str) -> str:
 def _salt_run(minion: str, command: str) -> str:
     _validate_minion(minion)
     result = subprocess.run(
-        ["salt", minion, "cmd.run", command, "--out=txt"],
+        ["salt", "-t", str(SALT_CLI_TIMEOUT), minion, "cmd.run", command, "--out=txt"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=SUBPROCESS_TIMEOUT,
     )
     if result.returncode != 0 and result.stderr:
         return f"ERROR: {result.stderr.strip()}"

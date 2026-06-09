@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import subprocess
 
-from agent.tools.salt_tools import _salt_run, _validate_minion
+from agent.tools.salt_tools import (
+    SALT_CLI_TIMEOUT,
+    SUBPROCESS_TIMEOUT,
+    _salt_run,
+    _validate_minion,
+)
 
 
 def get_os_info(minion: str) -> str:
@@ -88,10 +93,10 @@ def get_salt_grains(minion: str) -> str:
     """Return Salt grains (system metadata) for the minion."""
     _validate_minion(minion)
     result = subprocess.run(
-        ["salt", minion, "grains.items", "--out=yaml"],
+        ["salt", "-t", str(SALT_CLI_TIMEOUT), minion, "grains.items", "--out=yaml"],
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=SUBPROCESS_TIMEOUT,
     )
     if result.returncode != 0 and result.stderr:
         return f"ERROR: {result.stderr.strip()}"
