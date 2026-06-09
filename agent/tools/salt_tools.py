@@ -39,5 +39,18 @@ def ls_minion(minion: str, path: str) -> str:
 
 
 def get_processes(minion: str) -> str:
-    """Return running process list from the given Salt minion."""
-    return _salt_run(minion, "ps aux")
+    """Return host process list from the minion, excluding processes inside containers.
+
+    Filters out any PID whose /proc/<pid>/cgroup matches a known container runtime
+    (Docker, Podman, CRI-O, containerd/Kubernetes, LXC) so that processes from
+    `docker compose` and similar do not appear as host-level installed applications.
+    """
+    awk = (
+        "NR==1{print;next}"
+        "{pid=$2;cg=\"/proc/\" pid \"/cgroup\";skip=0;"
+        "while((getline l<cg)>0)"
+        "if(l~/(docker|libpod|crio|cri-containerd)-[0-9a-f]{6,}|\\/docker\\/[0-9a-f]|kubepods|\\/lxc\\/|lxc\\.payload/)"
+        "{skip=1;break}"
+        "close(cg);if(!skip)print}"
+    )
+    return _salt_run(minion, f"ps aux | awk '{awk}'")

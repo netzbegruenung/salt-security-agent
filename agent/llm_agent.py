@@ -16,6 +16,7 @@ from agent.tools.repo_tools import list_repo_files, read_repo_file, grep_repo
 from agent.tools.report_tool import create_report
 from agent.tools.salt_tools import ls_minion
 from agent.tools.system_tools import (
+    get_containers,
     get_cron_jobs,
     get_failed_services,
     get_last_logins,
@@ -213,6 +214,18 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "get_containers",
+            "description": (
+                "List running Docker, Podman, and LXC containers on the minion. "
+                "Use this to understand which workloads are expected to be running "
+                "inside containers (container PIDs are excluded from the host process list)."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_report",
             "description": (
                 "Submit the final findings report. Call this exactly once at the end of your "
@@ -337,6 +350,8 @@ def _call_tool(
         return get_last_logins(minion)
     if name == "get_salt_grains":
         return get_salt_grains(minion)
+    if name == "get_containers":
+        return get_containers(minion)
     if name == "create_report":
         return create_report(
             minion=minion,
@@ -405,7 +420,7 @@ def run_agent(
     user_message = (
         f"# Task\n\n{task}\n\n"
         f"# Target Minion\n\n{minion}\n\n"
-        f"# Currently Running Processes\n\n```\n{processes}\n```"
+        f"# Currently Running Host Processes (container processes excluded)\n\n```\n{processes}\n```"
     )
 
     messages: list[dict[str, Any]] = [

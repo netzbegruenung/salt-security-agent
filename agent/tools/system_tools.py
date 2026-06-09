@@ -62,6 +62,28 @@ def get_last_logins(minion: str) -> str:
     return _salt_run(minion, "last -n 20")
 
 
+def get_containers(minion: str) -> str:
+    """List running Docker, Podman, and LXC containers on the minion.
+
+    Missing runtimes are reported as such rather than failing the call. Output is
+    grouped under `--- docker ---`, `--- podman ---`, and `--- lxc ---` sections.
+    """
+    return _salt_run(
+        minion,
+        "echo '--- docker ---'; "
+        "if command -v docker >/dev/null 2>&1; then "
+        "docker ps --format 'table {{.ID}}\\t{{.Image}}\\t{{.Status}}\\t{{.Names}}\\t{{.Ports}}' 2>&1; "
+        "else echo '(docker not installed)'; fi; "
+        "echo; echo '--- podman ---'; "
+        "if command -v podman >/dev/null 2>&1; then "
+        "podman ps --format 'table {{.ID}}\\t{{.Image}}\\t{{.Status}}\\t{{.Names}}\\t{{.Ports}}' 2>&1; "
+        "else echo '(podman not installed)'; fi; "
+        "echo; echo '--- lxc ---'; "
+        "if command -v lxc-ls >/dev/null 2>&1; then lxc-ls --running -f 2>&1; "
+        "else echo '(lxc-ls not installed)'; fi",
+    )
+
+
 def get_salt_grains(minion: str) -> str:
     """Return Salt grains (system metadata) for the minion."""
     _validate_minion(minion)

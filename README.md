@@ -16,7 +16,7 @@ Celery Beat ──► dispatch_scans (task)
                     ▼
               scan_minion (task, runs on worker)
                     │
-                    ├─ get_processes  ──► salt <minion> cmd.run 'ps aux'
+                    ├─ get_processes  ──► salt <minion> cmd.run 'ps aux' (container PIDs filtered)
                     │
                     └─ run_agent (LLM tool-calling loop)
                             │
