@@ -43,7 +43,22 @@ def _post_with_retry(
     minion: str,
 ) -> httpx.Response:
     for attempt in range(SERVER_ERROR_MAX_RETRIES + 1):
-        response = client.post(url, headers=headers, json=payload)
+        try:
+            response = client.post(url, headers=headers, json=payload)
+        except (httpx.TimeoutException, httpx.RemoteProtocolError, httpx.NetworkError) as exc:
+            if attempt >= SERVER_ERROR_MAX_RETRIES:
+                raise
+            logger.warning(
+                "LLM request for minion %s raised %s: %s; backing off %d seconds before retry %d/%d.",
+                minion,
+                type(exc).__name__,
+                exc,
+                SERVER_ERROR_BACKOFF_SECONDS,
+                attempt + 1,
+                SERVER_ERROR_MAX_RETRIES,
+            )
+            time.sleep(SERVER_ERROR_BACKOFF_SECONDS)
+            continue
         if response.status_code < 500:
             response.raise_for_status()
             return response
