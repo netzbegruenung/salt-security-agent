@@ -3,6 +3,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,35 @@ from agent.tools.system_tools import (
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 50
+SERVER_ERROR_BACKOFF_SECONDS = 300
+SERVER_ERROR_MAX_RETRIES = 5
+
+
+def _post_with_retry(
+    client: httpx.Client,
+    url: str,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    minion: str,
+) -> httpx.Response:
+    for attempt in range(SERVER_ERROR_MAX_RETRIES + 1):
+        response = client.post(url, headers=headers, json=payload)
+        if response.status_code < 500:
+            response.raise_for_status()
+            return response
+        if attempt >= SERVER_ERROR_MAX_RETRIES:
+            response.raise_for_status()
+        logger.warning(
+            "LLM request for minion %s returned %d; backing off %d seconds before retry %d/%d.",
+            minion,
+            response.status_code,
+            SERVER_ERROR_BACKOFF_SECONDS,
+            attempt + 1,
+            SERVER_ERROR_MAX_RETRIES,
+        )
+        time.sleep(SERVER_ERROR_BACKOFF_SECONDS)
+    response.raise_for_status()
+    return response
 
 TOOL_DEFINITIONS = [
     {
@@ -404,17 +434,18 @@ def run_agent(
                     char_budget,
                 )
                 break
-            response = client.post(
+            response = _post_with_retry(
+                client,
                 f"{llm_cfg.url}/chat/completions",
-                headers=headers,
-                json={
+                headers,
+                {
                     "model": llm_cfg.model,
                     "messages": messages,
                     "tools": TOOL_DEFINITIONS,
                     "tool_choice": "auto",
                 },
+                minion,
             )
-            response.raise_for_status()
             choice = response.json()["choices"][0]
             message = choice["message"]
             messages.append(message)
@@ -467,17 +498,18 @@ def run_agent(
                 "structured findings. Do not respond with text — only call the tool."
             ),
         })
-        forced_response = client.post(
+        forced_response = _post_with_retry(
+            client,
             f"{llm_cfg.url}/chat/completions",
-            headers=headers,
-            json={
+            headers,
+            {
                 "model": llm_cfg.model,
                 "messages": messages,
                 "tools": TOOL_DEFINITIONS,
                 "tool_choice": {"type": "function", "function": {"name": "create_report"}},
             },
+            minion,
         )
-        forced_response.raise_for_status()
         forced_message = forced_response.json()["choices"][0]["message"]
         for tool_call in forced_message.get("tool_calls") or []:
             if tool_call["function"]["name"] != "create_report":
