@@ -60,3 +60,19 @@ def scan(minion: str, config: str) -> None:
     from agent.tasks import scan_minion
     result = scan_minion.delay(minion)
     click.echo(f"Task enqueued. ID: {result.id}")
+
+
+@cli.command("flush-queue")
+@click.option("--config", default=DEFAULT_CONFIG_PATH, show_default=True, help="Path to config file.")
+@click.option("--yes", is_flag=True, help="Skip confirmation prompt.")
+def flush_queue(config: str, yes: bool) -> None:
+    """Discard all queued tasks from the Celery broker."""
+    os.environ[CONFIG_PATH_ENV_VAR] = config
+
+    from agent.celery_app import app
+
+    if not yes:
+        click.confirm("Discard all queued tasks?", abort=True)
+
+    purged = app.control.purge()
+    click.echo(f"Purged {purged} task(s) from the queue.")
