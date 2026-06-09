@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fnmatch
 import json
 import logging
 from datetime import datetime, timezone
@@ -324,12 +325,27 @@ def _call_tool(
     return f"Unknown tool: {name}"
 
 
-def _resolve_for_minion(default_path: Path, minion: str) -> Path:
-    candidate = Path(default_path).parent / f"{minion}.md"
-    if candidate.is_file():
-        logger.info("Using per-minion file %s", candidate)
-        return candidate
-    return Path(default_path / "default.md")
+def _resolve_for_minion(default_dir: Path, minion: str) -> Path:
+    exact = default_dir / f"{minion}.md"
+    if exact.is_file():
+        logger.info("Using per-minion file %s", exact)
+        return exact
+
+    matches: list[Path] = []
+    for entry in default_dir.glob("*.md"):
+        stem = entry.stem
+        if "_" not in stem:
+            continue
+        pattern = stem.replace("_", "*")
+        if fnmatch.fnmatchcase(minion, pattern):
+            matches.append(entry)
+
+    if matches:
+        best = max(matches, key=lambda p: len(p.stem))
+        logger.info("Using glob-matched file %s for minion %s", best, minion)
+        return best
+
+    return default_dir / "default.md"
 
 
 def run_agent(
@@ -373,11 +389,21 @@ def run_agent(
     }
 
     report: str | None = None
+    char_budget = llm_cfg.context_char_budget
 
     with httpx.Client(timeout=300) as client:
         iterations_used = 0
         for iteration in range(MAX_ITERATIONS):
             iterations_used = iteration + 1
+            context_chars = len(json.dumps(messages))
+            if context_chars > char_budget:
+                logger.warning(
+                    "Context budget exceeded for minion %s (%d chars > %d); forcing report.",
+                    minion,
+                    context_chars,
+                    char_budget,
+                )
+                break
             response = client.post(
                 f"{llm_cfg.url}/chat/completions",
                 headers=headers,

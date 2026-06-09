@@ -34,6 +34,12 @@ class LLMConfig:
     model: str
     threat_model_path: Path
     task_path: Path
+    context_window_tokens: int = 120_000
+    context_char_multiplier: float = 3.0
+
+    @property
+    def context_char_budget(self) -> int:
+        return int(self.context_window_tokens * self.context_char_multiplier)
 
 
 @dataclass
@@ -111,6 +117,8 @@ def load_config(path: str | Path | None = None) -> Config:
             model=l["model"],
             threat_model_path=Path(l["threat_model_path"]),
             task_path=Path(l["task_path"]),
+            context_window_tokens=int(l.get("context_window_tokens", 120_000)),
+            context_char_multiplier=float(l.get("context_char_multiplier", 3.0)),
         ),
         salt=SaltConfig(
             repo_path=Path(salt["repo_path"]),

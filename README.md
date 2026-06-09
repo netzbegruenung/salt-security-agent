@@ -95,15 +95,19 @@ Both paths are resolved relative to the current working directory if not absolut
 
 #### Per-minion overrides
 
-Before each scan, the agent looks for a minion-specific file alongside the configured
-default and uses it if present:
+Before each scan, the agent looks for a minion-specific file inside the configured
+directory and uses it if present. Resolution order:
 
-- `<threat_model_path dir>/<minion>.md` — overrides the threat model for that minion.
-- `<task_path dir>/<minion>.md` — overrides the task for that minion.
+1. **Exact match** — `<dir>/<minion>.md`.
+2. **Glob match** — any `<dir>/<pattern>.md` where `_` in the filename stem acts as
+   a `*` wildcard. For example, `keycloak_.md` matches minion `keycloak01.example.com`
+   (pattern `keycloak*`). If multiple glob files match, the one with the longest
+   stem wins (most specific).
+3. **Default** — `<dir>/default.md`.
 
-If no per-minion file exists, the configured default is used. For example, with the
-default config above, a minion named `web-01` would pick up
-`threat_models/web-01.md` and `tasks/web-01.md` when those files exist.
+With the config above, a minion named `web-01.example.com` would pick up, in order,
+`threat_models/web-01.example.com.md`, then any glob like `threat_models/web_.md`
+(`web*`), then `threat_models/default.md`. Same resolution applies to `tasks/`.
 
 ### Reports
 

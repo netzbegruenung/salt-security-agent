@@ -11,6 +11,11 @@ access_token = "sk-changeme"
 model = "gpt-4o"
 threat_model_path = "threat_models/"
 task_path = "tasks/"
+# Optional. Context window of the model in tokens (default 120000). When the
+# serialized message history exceeds context_window_tokens * context_char_multiplier
+# characters, the agent stops calling tools and is forced to emit its report.
+# context_window_tokens = 120000
+# context_char_multiplier = 3.0
 
 [salt]
 repo_path = "/srv/salt"
