@@ -5,7 +5,7 @@ from datetime import date
 
 from agent.celery_app import app, cfg
 from agent.llm_agent import run_agent
-from agent.scheduler import mark_scanned, pick_next_minion, release_minion
+from agent.scheduler import mark_scanned, pick_next_minion
 from agent.tools.salt_tools import get_processes
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,5 @@ def scan_minion(self, minion: str) -> str:
             print(f"\n--- Report: {minion} ---\n\n{report}\n", flush=True)
         return report
     except Exception as exc:
-        release_minion(cfg.celery.broker_url, minion)
         logger.exception("Scan failed for minion %s: %s", minion, exc)
         raise self.retry(exc=exc, countdown=60)

@@ -7,12 +7,16 @@ import time
 import redis
 
 SCANNED_KEY = "salt:scanned"
-IN_PROGRESS_KEY = "salt:in_progress"
+IN_PROGRESS_PREFIX = "salt:in_progress:"
 IN_PROGRESS_TTL = 3600  # seconds
 
 
 def _redis_client(broker_url: str) -> redis.Redis:
     return redis.Redis.from_url(broker_url, decode_responses=True)
+
+
+def _in_progress_key(minion: str) -> str:
+    return f"{IN_PROGRESS_PREFIX}{minion}"
 
 
 def _list_accepted_minions() -> list[str]:
@@ -37,9 +41,12 @@ def pick_next_minion(broker_url: str, scan_period_seconds: int) -> str | None:
     if not minions:
         return None
 
-    in_progress = r.smembers(IN_PROGRESS_KEY)
+    pipe = r.pipeline()
+    for m in minions:
+        pipe.exists(_in_progress_key(m))
+    in_progress_flags = pipe.execute()
 
-    candidates = [m for m in minions if m not in in_progress]
+    candidates = [m for m, flag in zip(minions, in_progress_flags) if not flag]
     if not candidates:
         return None
 
@@ -54,19 +61,14 @@ def pick_next_minion(broker_url: str, scan_period_seconds: int) -> str | None:
         return None
     overdue.sort(key=lambda x: x[1])
 
-    chosen = overdue[0][0]
-    r.sadd(IN_PROGRESS_KEY, chosen)
-    r.expire(IN_PROGRESS_KEY, IN_PROGRESS_TTL)
-    return chosen
+    for minion, _ in overdue:
+        acquired = r.set(_in_progress_key(minion), "1", nx=True, ex=IN_PROGRESS_TTL)
+        if acquired:
+            return minion
+    return None
 
 
 def mark_scanned(broker_url: str, minion: str) -> None:
     r = _redis_client(broker_url)
     r.zadd(SCANNED_KEY, {minion: time.time()})
-    r.srem(IN_PROGRESS_KEY, minion)
-
-
-def release_minion(broker_url: str, minion: str) -> None:
-    """Remove in-progress lock without updating scan timestamp (used on failure)."""
-    r = _redis_client(broker_url)
-    r.srem(IN_PROGRESS_KEY, minion)
+    r.delete(_in_progress_key(minion))
