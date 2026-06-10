@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 import redis
 
@@ -14,12 +14,18 @@ IN_PROGRESS_TTL = 14400  # seconds (4 hours)
 
 def _to_redis_py_url(broker_url: str) -> str:
     # Celery/kombu uses "redis+socket://" for Unix sockets; redis-py uses "unix://".
-    # Translate so a single broker_url works for both.
+    # Translate so a single broker_url works for both. urlunparse drops "//" for
+    # schemes outside uses_netloc, so build the unix:// URL explicitly.
     if not broker_url.startswith("redis+socket://"):
         return broker_url
     parsed = urlparse(broker_url)
-    query = [("db" if k == "virtual_host" else k, v) for k, v in parse_qsl(parsed.query)]
-    return urlunparse(parsed._replace(scheme="unix", query=urlencode(query)))
+    query = urlencode(
+        [("db" if k == "virtual_host" else k, v) for k, v in parse_qsl(parsed.query)]
+    )
+    url = f"unix://{parsed.path}"
+    if query:
+        url = f"{url}?{query}"
+    return url
 
 
 def _redis_client(broker_url: str) -> redis.Redis:
