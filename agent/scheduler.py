@@ -8,7 +8,7 @@ import redis
 
 SCANNED_KEY = "salt:scanned"
 IN_PROGRESS_PREFIX = "salt:in_progress:"
-IN_PROGRESS_TTL = 3600  # seconds
+IN_PROGRESS_TTL = 14400  # seconds (4 hours)
 
 
 def _redis_client(broker_url: str) -> redis.Redis:
@@ -72,3 +72,9 @@ def mark_scanned(broker_url: str, minion: str) -> None:
     r = _redis_client(broker_url)
     r.zadd(SCANNED_KEY, {minion: time.time()})
     r.delete(_in_progress_key(minion))
+
+
+def refresh_in_progress(broker_url: str, minion: str) -> None:
+    """Reset the in-progress lock TTL so it covers actual scan execution, not just queue dwell time."""
+    r = _redis_client(broker_url)
+    r.set(_in_progress_key(minion), "1", ex=IN_PROGRESS_TTL)

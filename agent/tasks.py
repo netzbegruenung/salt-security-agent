@@ -5,7 +5,7 @@ from datetime import date
 
 from agent.celery_app import app, cfg
 from agent.llm_agent import run_agent
-from agent.scheduler import mark_scanned, pick_next_minion
+from agent.scheduler import IN_PROGRESS_TTL, mark_scanned, pick_next_minion, refresh_in_progress
 from agent.tools.salt_tools import get_processes
 
 logger = logging.getLogger(__name__)
@@ -18,12 +18,13 @@ def dispatch_scans() -> None:
         logger.info("No minion available to scan (none overdue, all in progress, or none accepted).")
         return
     logger.info("Dispatching scan for minion: %s", minion)
-    scan_minion.delay(minion)
+    scan_minion.apply_async(args=[minion], expires=IN_PROGRESS_TTL)
 
 
 @app.task(name="agent.tasks.scan_minion", bind=True, max_retries=2)
 def scan_minion(self, minion: str) -> str:
     logger.info("Starting scan of minion: %s", minion)
+    refresh_in_progress(cfg.celery.broker_url, minion)
     try:
         processes = get_processes(minion)
         report = run_agent(
