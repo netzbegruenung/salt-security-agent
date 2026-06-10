@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import time
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import redis
 
@@ -11,8 +12,18 @@ IN_PROGRESS_PREFIX = "salt:in_progress:"
 IN_PROGRESS_TTL = 14400  # seconds (4 hours)
 
 
+def _to_redis_py_url(broker_url: str) -> str:
+    # Celery/kombu uses "redis+socket://" for Unix sockets; redis-py uses "unix://".
+    # Translate so a single broker_url works for both.
+    if not broker_url.startswith("redis+socket://"):
+        return broker_url
+    parsed = urlparse(broker_url)
+    query = [("db" if k == "virtual_host" else k, v) for k, v in parse_qsl(parsed.query)]
+    return urlunparse(parsed._replace(scheme="unix", query=urlencode(query)))
+
+
 def _redis_client(broker_url: str) -> redis.Redis:
-    return redis.Redis.from_url(broker_url, decode_responses=True)
+    return redis.Redis.from_url(_to_redis_py_url(broker_url), decode_responses=True)
 
 
 def _in_progress_key(minion: str) -> str:
