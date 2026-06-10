@@ -41,6 +41,13 @@ def ls_minion(minion: str, path: str) -> str:
     return _salt_run(minion, f"ls -la {shlex.quote(path)}")
 
 
+def file_minion(minion: str, path: str) -> str:
+    """Run 'file <path>' on the given Salt minion to identify the file type."""
+    if not isinstance(path, str) or not path:
+        raise ValueError("path must be a non-empty string")
+    return _salt_run(minion, f"file {shlex.quote(path)}")
+
+
 def get_processes(minion: str) -> str:
     """Return host process list from the minion, excluding processes inside containers.
 

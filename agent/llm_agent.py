@@ -14,7 +14,7 @@ from agent.config import LLMConfig, SaltConfig, SmtpConfig
 from agent.tools.alert_tool import send_alert
 from agent.tools.repo_tools import list_repo_files, read_repo_file, grep_repo
 from agent.tools.report_tool import create_report
-from agent.tools.salt_tools import ls_minion
+from agent.tools.salt_tools import file_minion, ls_minion
 from agent.tools.system_tools import (
     get_containers,
     get_cron_jobs,
@@ -88,6 +88,23 @@ TOOL_DEFINITIONS = [
                     "path": {
                         "type": "string",
                         "description": "Absolute path on the minion to list.",
+                    }
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_minion",
+            "description": "Run the `file` command on a path on the Salt minion to identify its type (e.g. ELF binary, script, data).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path on the minion to inspect.",
                     }
                 },
                 "required": ["path"],
@@ -338,6 +355,8 @@ def _call_tool(
 ) -> str:
     if name == "ls_minion":
         return ls_minion(minion, arguments["path"])
+    if name == "file_minion":
+        return file_minion(minion, arguments["path"])
     if name == "list_repo_files":
         entries = list_repo_files(salt_cfg.repo_path, arguments.get("rel_path", ""))
         return "\n".join(entries)
