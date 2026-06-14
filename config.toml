@@ -16,6 +16,8 @@ task_path = "tasks/"
 # characters, the agent stops calling tools and is forced to emit its report.
 # context_window_tokens = 120000
 # context_char_multiplier = 3.0
+# Optional. HTTP timeout in seconds for LLM API requests (default 300).
+# request_timeout_seconds = 300
 
 [salt]
 repo_path = "/srv/salt"

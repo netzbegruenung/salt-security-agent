@@ -470,7 +470,7 @@ def run_agent(
     report: str | None = None
     char_budget = llm_cfg.context_char_budget
 
-    with httpx.Client(timeout=300) as client:
+    with httpx.Client(timeout=llm_cfg.request_timeout_seconds) as client:
         iterations_used = 0
         for iteration in range(MAX_ITERATIONS):
             iterations_used = iteration + 1

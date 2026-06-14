@@ -36,6 +36,7 @@ class LLMConfig:
     task_path: Path
     context_window_tokens: int = 120_000
     context_char_multiplier: float = 3.0
+    request_timeout_seconds: float = 300.0
 
     @property
     def context_char_budget(self) -> int:
@@ -119,6 +120,7 @@ def load_config(path: str | Path | None = None) -> Config:
             task_path=Path(l["task_path"]),
             context_window_tokens=int(l.get("context_window_tokens", 120_000)),
             context_char_multiplier=float(l.get("context_char_multiplier", 3.0)),
+            request_timeout_seconds=float(l.get("request_timeout_seconds", 300.0)),
         ),
         salt=SaltConfig(
             repo_path=Path(salt["repo_path"]),
