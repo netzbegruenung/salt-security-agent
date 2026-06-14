@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 MAX_ITERATIONS = 50
 SERVER_ERROR_BACKOFF_SECONDS = 300
 SERVER_ERROR_MAX_RETRIES = 5
+COMPACTION_THRESHOLD = 0.8
+COMPACTION_KEEP_HEAD = 2
+COMPACTION_KEEP_TAIL = 6
 
 
 def _post_with_retry(
@@ -75,6 +78,77 @@ def _post_with_retry(
         time.sleep(SERVER_ERROR_BACKOFF_SECONDS)
     response.raise_for_status()
     return response
+
+
+def _compact_history(
+    client: httpx.Client,
+    messages: list[dict[str, Any]],
+    headers: dict[str, str],
+    llm_cfg: LLMConfig,
+    minion: str,
+) -> list[dict[str, Any]]:
+    tail_start = max(COMPACTION_KEEP_HEAD, len(messages) - COMPACTION_KEEP_TAIL)
+    while tail_start < len(messages) and messages[tail_start].get("role") == "tool":
+        tail_start += 1
+    if tail_start <= COMPACTION_KEEP_HEAD or tail_start >= len(messages):
+        return messages
+
+    summarization_request = list(messages[:tail_start]) + [
+        {
+            "role": "user",
+            "content": (
+                "Summarize the security investigation so far in concise prose. Cover: "
+                "tools called and what they returned, files/paths inspected, hypotheses "
+                "confirmed or ruled out, suspected findings with their evidence, and what "
+                "still needs to be checked. Do not call any tools — respond with plain "
+                "text only."
+            ),
+        }
+    ]
+
+    before_chars = len(json.dumps(messages))
+    before_count = len(messages)
+
+    response = _post_with_retry(
+        client,
+        f"{llm_cfg.url}/chat/completions",
+        headers,
+        {
+            "model": llm_cfg.model,
+            "messages": summarization_request,
+        },
+        minion,
+    )
+    summary = (response.json()["choices"][0]["message"].get("content") or "").strip()
+    if not summary:
+        raise RuntimeError(f"Compaction returned empty summary for minion {minion}")
+
+    compacted = (
+        list(messages[:COMPACTION_KEEP_HEAD])
+        + [
+            {
+                "role": "user",
+                "content": (
+                    "# Investigation So Far (Compacted)\n\n"
+                    f"{summary}\n\n"
+                    "Continue with tool calls and finish by calling `create_report`."
+                ),
+            }
+        ]
+        + list(messages[tail_start:])
+    )
+
+    after_chars = len(json.dumps(compacted))
+    logger.info(
+        "Compacted history for minion %s: %d -> %d chars, %d -> %d messages.",
+        minion,
+        before_chars,
+        after_chars,
+        before_count,
+        len(compacted),
+    )
+    return compacted
+
 
 TOOL_DEFINITIONS = [
     {
@@ -469,6 +543,8 @@ def run_agent(
 
     report: str | None = None
     char_budget = llm_cfg.context_char_budget
+    compaction_soft_limit = int(char_budget * COMPACTION_THRESHOLD)
+    last_compacted_msg_count: int | None = None
 
     with httpx.Client(timeout=llm_cfg.request_timeout_seconds) as client:
         iterations_used = 0
@@ -483,6 +559,20 @@ def run_agent(
                     char_budget,
                 )
                 break
+            if (
+                context_chars > compaction_soft_limit
+                and len(messages) > COMPACTION_KEEP_HEAD + COMPACTION_KEEP_TAIL
+                and (last_compacted_msg_count is None or len(messages) > last_compacted_msg_count)
+            ):
+                logger.info(
+                    "Context at %d/%d chars (>%d%% of budget); compacting history for minion %s.",
+                    context_chars,
+                    char_budget,
+                    int(COMPACTION_THRESHOLD * 100),
+                    minion,
+                )
+                messages = _compact_history(client, messages, headers, llm_cfg, minion)
+                last_compacted_msg_count = len(messages)
             response = _post_with_retry(
                 client,
                 f"{llm_cfg.url}/chat/completions",
