@@ -51,13 +51,33 @@ def beat(config: str, loglevel: str) -> None:
 
 
 @cli.command()
-@click.argument("minion")
+@click.argument("minion", required=False)
+@click.option("--all", "scan_all", is_flag=True, help="Scan all accepted minions.")
 @click.option("--config", default=DEFAULT_CONFIG_PATH, show_default=True, help="Path to config file.")
-def scan(minion: str, config: str) -> None:
+def scan(minion: str | None, scan_all: bool, config: str) -> None:
     """Scan a specific MINION immediately (enqueued via Celery)."""
     os.environ[CONFIG_PATH_ENV_VAR] = config
 
+    if scan_all and minion:
+        raise click.UsageError("Pass either MINION or --all, not both.")
+    if not scan_all and not minion:
+        raise click.UsageError("Provide a MINION argument or use --all.")
+
     from agent.tasks import scan_minion
+
+    if scan_all:
+        from agent.scheduler import _list_accepted_minions
+
+        minions = _list_accepted_minions()
+        if not minions:
+            click.echo("No accepted minions found.")
+            return
+        for m in minions:
+            result = scan_minion.delay(m)
+            click.echo(f"{m}: enqueued (task ID: {result.id})")
+        click.echo(f"Enqueued {len(minions)} scan task(s).")
+        return
+
     result = scan_minion.delay(minion)
     click.echo(f"Task enqueued. ID: {result.id}")
 
