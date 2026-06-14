@@ -5,7 +5,7 @@ import smtplib
 from email.message import EmailMessage
 
 from agent.config import SmtpConfig
-from agent.tools.salt_tools import _validate_minion
+from agent.tools.minion_tools import validate_minion
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def send_alert(
     smtp_cfg: SmtpConfig | None = None,
 ) -> str:
     """Emit a security alert. Logs always; sends e-mail when SMTP is configured."""
-    _validate_minion(minion)
+    validate_minion(minion)
     severity = severity.lower().strip() if isinstance(severity, str) else ""
     if severity not in VALID_SEVERITIES:
         severity = "high"

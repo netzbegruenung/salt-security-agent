@@ -6,7 +6,7 @@ from datetime import date
 from agent.celery_app import app, cfg
 from agent.llm_agent import run_agent
 from agent.scheduler import IN_PROGRESS_TTL, mark_scanned, pick_next_minion, refresh_in_progress
-from agent.tools.salt_tools import get_processes
+from agent.tools.minion_tools import get_processes
 
 logger = logging.getLogger(__name__)
 

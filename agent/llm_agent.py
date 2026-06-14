@@ -14,8 +14,8 @@ from agent.config import LLMConfig, SaltConfig, SmtpConfig
 from agent.tools.alert_tool import send_alert
 from agent.tools.repo_tools import list_repo_files, read_repo_file, grep_repo
 from agent.tools.report_tool import create_report
-from agent.tools.salt_tools import file_minion, ls_minion
-from agent.tools.system_tools import (
+from agent.tools.minion_tools import (
+    file_minion,
     get_containers,
     get_cron_jobs,
     get_failed_services,
@@ -26,6 +26,7 @@ from agent.tools.system_tools import (
     get_salt_grains,
     get_suid_files,
     get_users,
+    ls_minion,
 )
 
 logger = logging.getLogger(__name__)
