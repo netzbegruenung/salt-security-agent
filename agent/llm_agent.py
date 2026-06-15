@@ -433,8 +433,7 @@ def _call_tool(
     if name == "file_minion":
         return file_minion(minion, arguments["path"])
     if name == "list_repo_files":
-        entries = list_repo_files(salt_cfg.repo_path, arguments.get("rel_path", ""))
-        return "\n".join(entries)
+        return list_repo_files(salt_cfg.repo_path, arguments.get("rel_path", ""))
     if name == "read_repo_file":
         return read_repo_file(salt_cfg.repo_path, arguments["rel_path"])
     if name == "grep_repo":

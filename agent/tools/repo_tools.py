@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 
@@ -12,16 +13,18 @@ def _safe_resolve(repo_path: Path, rel_path: str) -> Path:
     return resolved
 
 
-def list_repo_files(repo_path: Path, rel_path: str = "") -> list[str]:
-    """List files and directories at rel_path inside the Salt repo."""
+def list_repo_files(repo_path: Path, rel_path: str = "") -> str:
+    """List files and directories at rel_path inside the Salt repo via `ls -l`."""
     target = _safe_resolve(repo_path, rel_path) if rel_path else repo_path.resolve()
     if not target.is_dir():
         raise ValueError(f"{rel_path!r} is not a directory in the Salt repo")
-    entries = []
-    for entry in sorted(os.scandir(target), key=lambda e: (e.is_file(), e.name)):
-        suffix = "/" if entry.is_dir() else ""
-        entries.append(entry.name + suffix)
-    return entries
+    result = subprocess.run(
+        ["ls", "-l", "--", str(target)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
 
 
 def read_repo_file(repo_path: Path, rel_path: str) -> str:
