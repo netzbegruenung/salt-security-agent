@@ -32,7 +32,7 @@ from agent.tools.minion_tools import (
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 50
+MAX_ITERATIONS = 100
 SERVER_ERROR_BACKOFF_SECONDS = 300
 SERVER_ERROR_MAX_RETRIES = 5
 COMPACTION_THRESHOLD = 0.8
