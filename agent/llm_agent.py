@@ -25,6 +25,7 @@ from agent.tools.minion_tools import (
     get_running_services,
     get_salt_grains,
     get_suid_files,
+    get_support_status,
     get_users,
     ls_minion,
 )
@@ -321,6 +322,17 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "get_support_status",
+            "description": (
+                "Run `check-support-status` on the minion to list installed packages whose "
+                "security support has ended or is limited. Only works on Debian systems."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_containers",
             "description": (
                 "List running Docker, Podman, and LXC containers on the minion. "
@@ -460,6 +472,8 @@ def _call_tool(
         return get_salt_grains(minion)
     if name == "get_containers":
         return get_containers(minion)
+    if name == "get_support_status":
+        return get_support_status(minion)
     if name == "create_report":
         return create_report(
             minion=minion,

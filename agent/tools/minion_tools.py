@@ -137,6 +137,14 @@ def get_last_logins(minion: str) -> str:
     return salt_run(minion, "last -n 20")
 
 
+def get_support_status(minion: str) -> str:
+    """Run `check-support-status` on the minion (Debian only).
+
+    Lists installed packages whose security support has ended or is limited.
+    """
+    return salt_run(minion, "check-support-status")
+
+
 def get_containers(minion: str) -> str:
     """List running Docker, Podman, and LXC containers on the minion.
 
