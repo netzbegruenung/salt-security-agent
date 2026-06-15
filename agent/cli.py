@@ -64,11 +64,11 @@ def scan(minion: str | None, scan_all: bool, config: str) -> None:
         raise click.UsageError("Provide a MINION argument or use --all.")
 
     from agent.tasks import scan_minion
+    from agent.scheduler import _list_accepted_minions
+
+    minions = _list_accepted_minions()
 
     if scan_all:
-        from agent.scheduler import _list_accepted_minions
-
-        minions = _list_accepted_minions()
         if not minions:
             click.echo("No accepted minions found.")
             return
@@ -77,6 +77,12 @@ def scan(minion: str | None, scan_all: bool, config: str) -> None:
             click.echo(f"{m}: enqueued (task ID: {result.id})")
         click.echo(f"Enqueued {len(minions)} scan task(s).")
         return
+
+    if minion not in minions:
+        raise click.BadParameter(
+            f"Minion '{minion}' is not in the list of accepted minions.",
+            param_hint="MINION",
+        )
 
     result = scan_minion.delay(minion)
     click.echo(f"Task enqueued. ID: {result.id}")
