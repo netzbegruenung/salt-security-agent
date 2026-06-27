@@ -13,7 +13,11 @@ logger = logging.getLogger(__name__)
 
 @app.task(name="agent.tasks.dispatch_scans")
 def dispatch_scans() -> None:
-    minion = pick_next_minion(cfg.celery.broker_url, cfg.scanning.scan_period_seconds)
+    minion = pick_next_minion(
+        cfg.celery.broker_url,
+        cfg.scanning.scan_period_seconds,
+        cfg.scanning.initial_scan_delay_seconds,
+    )
     if minion is None:
         logger.info("No minion available to scan (none overdue, all in progress, or none accepted).")
         return

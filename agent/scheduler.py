@@ -8,6 +8,7 @@ from urllib.parse import parse_qsl, urlencode, urlparse
 import redis
 
 SCANNED_KEY = "salt:scanned"
+FIRST_SEEN_KEY = "salt:first_seen"
 IN_PROGRESS_PREFIX = "salt:in_progress:"
 IN_PROGRESS_TTL = 14400  # seconds (4 hours)
 
@@ -47,33 +48,45 @@ def _list_accepted_minions() -> list[str]:
     return data.get("minions", [])
 
 
-def pick_next_minion(broker_url: str, scan_period_seconds: int) -> str | None:
+def pick_next_minion(
+    broker_url: str, scan_period_seconds: int, initial_delay_seconds: int
+) -> str | None:
     """Return the oldest-scanned minion whose last scan is older than the period.
 
-    Minions that have never been scanned are always eligible. Minions currently
-    being scanned are excluded.
+    Minions that have never been scanned are eligible only once they have been
+    observed for at least initial_delay_seconds, so a freshly accepted minion is
+    given time to finish setup before its first scan. Minions currently being
+    scanned are excluded.
     """
     r = _redis_client(broker_url)
     minions = _list_accepted_minions()
     if not minions:
         return None
 
+    now = time.time()
     pipe = r.pipeline()
     for m in minions:
+        pipe.zadd(FIRST_SEEN_KEY, {m: now}, nx=True)
+    for m in minions:
         pipe.exists(_in_progress_key(m))
-    in_progress_flags = pipe.execute()
+    results = pipe.execute()
+    in_progress_flags = results[len(minions):]
 
     candidates = [m for m, flag in zip(minions, in_progress_flags) if not flag]
     if not candidates:
         return None
 
     scores = r.zmscore(SCANNED_KEY, candidates)
-    cutoff = time.time() - scan_period_seconds
-    overdue = [
-        (m, s if s is not None else 0.0)
-        for m, s in zip(candidates, scores)
-        if s is None or s < cutoff
-    ]
+    first_seen_scores = r.zmscore(FIRST_SEEN_KEY, candidates)
+    cutoff = now - scan_period_seconds
+    delay_cutoff = now - initial_delay_seconds
+    overdue: list[tuple[str, float]] = []
+    for m, scan_score, first_seen in zip(candidates, scores, first_seen_scores):
+        if scan_score is None:
+            if first_seen is not None and first_seen <= delay_cutoff:
+                overdue.append((m, 0.0))
+        elif scan_score < cutoff:
+            overdue.append((m, scan_score))
     if not overdue:
         return None
     overdue.sort(key=lambda x: x[1])

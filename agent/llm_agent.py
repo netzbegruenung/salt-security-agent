@@ -318,7 +318,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_last_logins",
-            "description": "Return the last 20 login records on the minion (output of `last -n 20`).",
+            "description": "Return the last 20 login records from the auth log on the minion (output of `last -n 20`).",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },

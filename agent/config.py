@@ -21,10 +21,15 @@ class ScanningConfig:
     parallel_hosts: int
     scan_period: str
     report_directory: Path | None = None
+    initial_scan_delay_hours: float = 3.0
 
     @property
     def scan_period_seconds(self) -> int:
         return SCAN_PERIOD_SECONDS[self.scan_period]
+
+    @property
+    def initial_scan_delay_seconds(self) -> int:
+        return int(self.initial_scan_delay_hours * 3600)
 
 
 @dataclass
@@ -105,12 +110,20 @@ def load_config(path: str | Path | None = None) -> Config:
             use_starttls=bool(smtp.get("use_starttls", True)),
         )
 
+    initial_scan_delay_hours = float(s.get("initial_scan_delay_hours", 3.0))
+    if initial_scan_delay_hours < 0:
+        raise ValueError(
+            f"scanning.initial_scan_delay_hours must be non-negative, "
+            f"got {initial_scan_delay_hours!r}"
+        )
+
     report_directory = s.get("report_directory")
     return Config(
         scanning=ScanningConfig(
             parallel_hosts=s["parallel_hosts"],
             scan_period=scan_period,
             report_directory=Path(report_directory) if report_directory else None,
+            initial_scan_delay_hours=initial_scan_delay_hours,
         ),
         llm=LLMConfig(
             url=l["url"].rstrip("/"),
