@@ -37,6 +37,7 @@ def scan_minion(self, minion: str) -> str:
             llm_cfg=cfg.llm,
             salt_cfg=cfg.salt,
             smtp_cfg=cfg.smtp,
+            subagent_cfg=cfg.subagents,
         )
         mark_scanned(cfg.celery.broker_url, minion)
         logger.info("Scan complete for minion %s.", minion)

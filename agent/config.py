@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 CONFIG_PATH_ENV_VAR = "SALT_SECURITY_AGENT_CONFIG"
@@ -49,6 +49,19 @@ class LLMConfig:
 
 
 @dataclass
+class SubagentConfig:
+    """Delegation of focused investigations to short-lived sub-agents.
+
+    Disabled by default: enabling it lets one scan issue up to
+    `max_spawns * max_iterations` additional LLM round trips and tool calls.
+    """
+
+    enabled: bool = False
+    max_spawns: int = 5
+    max_iterations: int = 25
+
+
+@dataclass
 class SaltConfig:
     repo_path: Path
 
@@ -76,6 +89,7 @@ class Config:
     llm: LLMConfig
     salt: SaltConfig
     celery: CeleryConfig
+    subagents: SubagentConfig = field(default_factory=SubagentConfig)
     smtp: SmtpConfig | None = None
 
 
@@ -117,6 +131,22 @@ def load_config(path: str | Path | None = None) -> Config:
             f"got {initial_scan_delay_hours!r}"
         )
 
+    sub = raw.get("subagents", {})
+    subagent_cfg = SubagentConfig(
+        enabled=bool(sub.get("enabled", False)),
+        max_spawns=int(sub.get("max_spawns", 5)),
+        max_iterations=int(sub.get("max_iterations", 25)),
+    )
+    if subagent_cfg.max_spawns < 1:
+        raise ValueError(
+            f"subagents.max_spawns must be at least 1, got {subagent_cfg.max_spawns!r}; "
+            "set subagents.enabled = false to disable delegation"
+        )
+    if subagent_cfg.max_iterations < 1:
+        raise ValueError(
+            f"subagents.max_iterations must be at least 1, got {subagent_cfg.max_iterations!r}"
+        )
+
     report_directory = s.get("report_directory")
     return Config(
         scanning=ScanningConfig(
@@ -142,5 +172,6 @@ def load_config(path: str | Path | None = None) -> Config:
             broker_url=c["broker_url"],
             result_backend=c["result_backend"],
         ),
+        subagents=subagent_cfg,
         smtp=smtp_cfg,
     )

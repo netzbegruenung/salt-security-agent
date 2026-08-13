@@ -22,7 +22,9 @@ Celery Beat ──► dispatch_scans (task)
                             │
                             ├─ ls_minion(path)       → salt <minion> cmd.run 'ls -la <path>'
                             ├─ list_repo_files(path) → os.scandir(repo_path / path)
-                            └─ read_repo_file(path)  → open(repo_path / path)
+                            ├─ read_repo_file(path)  → open(repo_path / path)
+                            └─ spawn_subagent(task)  → run_subagent (optional; own tool loop,
+                                                       same read-only tools, returns a summary)
 ```
 
 - **Broker & state**: Redis
@@ -64,6 +66,12 @@ access_token = "sk-..."
 model = "gpt-4o"
 threat_model_path = "threat_models/default_threat_model.md"
 task_path = "tasks/default_task.md"
+
+# Optional. Sub-agent delegation; omit the section to keep it disabled.
+[subagents]
+enabled = false
+max_spawns = 5         # sub-agents per scan
+max_iterations = 25    # tool-calling rounds per sub-agent
 
 [salt]
 repo_path = "/srv/salt"   # Absolute path to the Salt state repository on the master
@@ -108,6 +116,34 @@ directory and uses it if present. Resolution order:
 With the config above, a minion named `web-01.example.com` would pick up, in order,
 `threat_models/web-01.example.com.md`, then any glob like `threat_models/web_.md`
 (`web*`), then `threat_models/default.md`. Same resolution applies to `tasks/`.
+
+### Sub-agents
+
+With `subagents.enabled = true`, the main agent gains a `spawn_subagent` tool that
+delegates one focused investigation to a short-lived sub-agent — for example, auditing
+every cron entry against the Salt repo, or triaging a long list of SUID binaries. The
+point is to keep bulk tool output out of the main agent's context: only the sub-agent's
+summary comes back.
+
+A sub-agent:
+
+- starts with an **empty context** — it only knows the `task` and `context` strings the
+  main agent writes, plus the threat model and target minion;
+- has the **same read-only inspection tools**, and nothing else: it cannot spawn further
+  sub-agents, cannot call `create_report`, and cannot call `send_alert`;
+- ends by calling `submit_findings`, whose text is the only thing the main agent receives;
+- runs **synchronously** — the main agent blocks until it returns.
+
+Its answer reaches the main agent wrapped in the usual untrusted-data markers, because it
+is derived from minion data that an attacker may control. The main agent is instructed to
+treat sub-agent output as a lead and to re-verify anything that would drive a
+high-severity finding or an alert. Each sub-agent uses its own nonce, so injected data
+cannot forge markers for the parent's session.
+
+Cost scales accordingly: enabling this allows up to `max_spawns * max_iterations`
+additional LLM round trips per scan on top of the main agent's own budget. Sub-agents that
+hit `max_iterations` are forced to submit what they have; a sub-agent that fails entirely
+reports that failure to the main agent rather than aborting the scan.
 
 ### Reports
 
@@ -157,10 +193,15 @@ salt-security-agent/
     ├── celery_app.py                  # Celery app + Beat schedule
     ├── tasks.py                       # Celery tasks
     ├── scheduler.py                   # Minion picker (Redis)
-    ├── llm_agent.py                   # LLM tool-calling loop (httpx)
+    ├── llm_agent.py                   # Main LLM tool-calling loop
+    ├── llm_client.py                  # Shared LLM transport (httpx, retries, data wrapping)
+    ├── subagent.py                    # Delegated sub-agent loop
     └── tools/
-        ├── salt_tools.py              # ls_minion, get_processes
-        └── repo_tools.py             # list_repo_files, read_repo_file
+        ├── registry.py                # Tool schemas + inspection-tool dispatch
+        ├── minion_tools.py            # ls_minion, get_processes, get_cron_jobs, ...
+        ├── repo_tools.py              # list_repo_files, read_repo_file, grep_repo
+        ├── report_tool.py             # create_report (Markdown rendering)
+        └── alert_tool.py              # send_alert (log + optional SMTP)
 ```
 
 ## How minion selection works
