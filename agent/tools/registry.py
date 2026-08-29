@@ -5,6 +5,10 @@ from typing import Any
 from agent.config import SaltConfig
 from agent.tools.repo_tools import grep_repo, list_repo_files, read_repo_file
 from agent.tools.minion_tools import (
+    DEFAULT_GREP_MATCHES,
+    DEFAULT_READ_LINES,
+    MAX_GREP_MATCHES,
+    MAX_READ_LINES,
     file_minion,
     get_containers,
     get_cron_jobs,
@@ -17,7 +21,9 @@ from agent.tools.minion_tools import (
     get_suid_files,
     get_support_status,
     get_users,
+    grep_file_minion,
     ls_minion,
+    read_file_minion,
 )
 
 # Read-only inspection tools. Available to the main agent and to sub-agents alike;
@@ -213,6 +219,93 @@ INVESTIGATION_TOOLS = [
         },
     },
 ]
+
+# Chat-only tools. These pull arbitrary file content off a minion, so they are
+# deliberately absent from INVESTIGATION_TOOLS: an unattended scan and its sub-agents
+# must never reach them. In the interactive chat every call is approved by the
+# operator before it runs (see APPROVAL_REQUIRED_TOOLS).
+CHAT_ONLY_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file_minion",
+            "description": (
+                "Read a page of a text file on the Salt minion, with absolute line numbers. "
+                f"Returns at most {MAX_READ_LINES} lines per call ({DEFAULT_READ_LINES} by "
+                "default) starting at `offset`; page through long files by repeating the call "
+                "with a higher `offset`. Binary files are refused — use `file_minion` on those. "
+                "Every call requires the operator's explicit approval, so read deliberately and "
+                "say what you are looking for before you call it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute path of the file on the minion.",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "1-based line number to start reading at. Defaults to 1.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": (
+                            f"Number of lines to read, capped at {MAX_READ_LINES}. "
+                            f"Defaults to {DEFAULT_READ_LINES}."
+                        ),
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grep_file_minion",
+            "description": (
+                "Recursively search a file or directory on the Salt minion for an extended "
+                "regular expression (case-sensitive, POSIX ERE as used by `grep -E`). Returns "
+                "matches as path:line:content, skipping binary files and cutting long lines. "
+                f"Capped at {DEFAULT_GREP_MATCHES} matches by default and {MAX_GREP_MATCHES} "
+                "at most. Every call requires the operator's explicit approval — prefer a "
+                "narrow path over searching from the filesystem root."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Extended regular expression to search for.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "Absolute file or directory path on the minion to search. "
+                            "Directories are searched recursively."
+                        ),
+                    },
+                    "max_matches": {
+                        "type": "integer",
+                        "description": (
+                            f"Maximum number of matching lines to return (cap {MAX_GREP_MATCHES})."
+                        ),
+                    },
+                },
+                "required": ["pattern", "path"],
+            },
+        },
+    },
+]
+
+# The full toolset offered in the interactive chat: read-only inspection plus the
+# two approval-gated file tools. No reporting, alerting, or delegation.
+CHAT_TOOLS = INVESTIGATION_TOOLS + CHAT_ONLY_TOOLS
+
+# Tools the operator must approve on every single call.
+APPROVAL_REQUIRED_TOOLS = frozenset({"read_file_minion", "grep_file_minion"})
+
 
 # Terminal tools for the main agent only. Sub-agents never report or alert directly.
 REPORTING_TOOLS = [
@@ -421,4 +514,35 @@ def call_investigation_tool(
         return get_containers(minion)
     if name == "get_support_status":
         return get_support_status(minion)
+    return None
+
+
+def call_chat_tool(
+    name: str,
+    arguments: dict[str, Any],
+    minion: str,
+    salt_cfg: SaltConfig,
+) -> str | None:
+    """Dispatch a tool available in the interactive chat.
+
+    Kept separate from `call_investigation_tool` so the chat-only file tools stay
+    unreachable from the scan and sub-agent loops, which call that function directly.
+    """
+    result = call_investigation_tool(name, arguments, minion, salt_cfg)
+    if result is not None:
+        return result
+    if name == "read_file_minion":
+        return read_file_minion(
+            minion,
+            arguments["path"],
+            offset=arguments.get("offset", 1),
+            limit=arguments.get("limit"),
+        )
+    if name == "grep_file_minion":
+        return grep_file_minion(
+            minion,
+            arguments["pattern"],
+            arguments["path"],
+            max_matches=arguments.get("max_matches"),
+        )
     return None

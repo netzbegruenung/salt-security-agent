@@ -11,7 +11,13 @@ from typing import Any
 import httpx
 
 from agent.config import LLMConfig, SaltConfig, SmtpConfig, SubagentConfig
-from agent.llm_client import post_with_retry, wrap_untrusted
+from agent.llm_client import (
+    COMPACTION_KEEP_HEAD,
+    COMPACTION_KEEP_TAIL,
+    compact_history,
+    post_with_retry,
+    wrap_untrusted,
+)
 from agent.subagent import run_subagent
 from agent.tools.alert_tool import send_alert
 from agent.tools.registry import (
@@ -26,80 +32,10 @@ logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 100
 COMPACTION_THRESHOLD = 0.8
-COMPACTION_KEEP_HEAD = 2
-COMPACTION_KEEP_TAIL = 6
 
 _TRUSTED_RESULT_TOOLS = {"create_report", "send_alert"}
 
-
-def _compact_history(
-    client: httpx.Client,
-    messages: list[dict[str, Any]],
-    headers: dict[str, str],
-    llm_cfg: LLMConfig,
-    minion: str,
-) -> list[dict[str, Any]]:
-    tail_start = max(COMPACTION_KEEP_HEAD, len(messages) - COMPACTION_KEEP_TAIL)
-    while tail_start < len(messages) and messages[tail_start].get("role") == "tool":
-        tail_start += 1
-    if tail_start <= COMPACTION_KEEP_HEAD or tail_start >= len(messages):
-        return messages
-
-    summarization_request = list(messages[:tail_start]) + [
-        {
-            "role": "user",
-            "content": (
-                "Summarize the security investigation so far in concise prose. Cover: "
-                "tools called and what they returned, files/paths inspected, hypotheses "
-                "confirmed or ruled out, suspected findings with their evidence, and what "
-                "still needs to be checked. Do not call any tools — respond with plain "
-                "text only."
-            ),
-        }
-    ]
-
-    before_chars = len(json.dumps(messages))
-    before_count = len(messages)
-
-    response = post_with_retry(
-        client,
-        f"{llm_cfg.url}/chat/completions",
-        headers,
-        {
-            "model": llm_cfg.model,
-            "messages": summarization_request,
-        },
-        f"minion {minion} (compaction)",
-    )
-    summary = (response.json()["choices"][0]["message"].get("content") or "").strip()
-    if not summary:
-        raise RuntimeError(f"Compaction returned empty summary for minion {minion}")
-
-    compacted = (
-        list(messages[:COMPACTION_KEEP_HEAD])
-        + [
-            {
-                "role": "user",
-                "content": (
-                    "# Investigation So Far (Compacted)\n\n"
-                    f"{summary}\n\n"
-                    "Continue with tool calls and finish by calling `create_report`."
-                ),
-            }
-        ]
-        + list(messages[tail_start:])
-    )
-
-    after_chars = len(json.dumps(compacted))
-    logger.info(
-        "Compacted history for minion %s: %d -> %d chars, %d -> %d messages.",
-        minion,
-        before_chars,
-        after_chars,
-        before_count,
-        len(compacted),
-    )
-    return compacted
+_COMPACTION_CONTINUATION = "Continue with tool calls and finish by calling `create_report`."
 
 
 def _call_tool(
@@ -131,7 +67,7 @@ def _call_tool(
     return f"Unknown tool: {name}"
 
 
-def _resolve_for_minion(default_dir: Path, minion: str) -> Path:
+def resolve_for_minion(default_dir: Path, minion: str) -> Path:
     exact = default_dir / f"{minion}.md"
     if exact.is_file():
         logger.info("Using per-minion file %s", exact)
@@ -225,8 +161,8 @@ def run_agent(
     subagent_cfg: SubagentConfig | None = None,
 ) -> str:
     subagent_cfg = subagent_cfg or SubagentConfig()
-    threat_model_path = _resolve_for_minion(llm_cfg.threat_model_path, minion)
-    task_path = _resolve_for_minion(llm_cfg.task_path, minion)
+    threat_model_path = resolve_for_minion(llm_cfg.threat_model_path, minion)
+    task_path = resolve_for_minion(llm_cfg.task_path, minion)
     threat_model = threat_model_path.read_text(encoding="utf-8")
     task = task_path.read_text(encoding="utf-8")
 
@@ -309,7 +245,14 @@ def run_agent(
                     int(COMPACTION_THRESHOLD * 100),
                     minion,
                 )
-                messages = _compact_history(client, messages, headers, llm_cfg, minion)
+                messages = compact_history(
+                    client,
+                    messages,
+                    headers,
+                    llm_cfg,
+                    f"minion {minion}",
+                    _COMPACTION_CONTINUATION,
+                )
                 last_compacted_msg_count = len(messages)
             response = post_with_retry(
                 client,

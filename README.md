@@ -145,6 +145,43 @@ additional LLM round trips per scan on top of the main agent's own budget. Sub-a
 hit `max_iterations` are forced to submit what they have; a sub-agent that fails entirely
 reports that failure to the main agent rather than aborting the scan.
 
+### Interactive chat
+
+`salt-security-agent chat <minion>` opens a curses chat window for investigating one host
+by hand. It is a separate loop from the scan: no report is produced, no alert can be sent,
+and no sub-agents are spawned — you ask, the model investigates, you read the answer.
+
+Two tools exist **only** in this mode and are absent from the scan and sub-agent toolsets:
+
+- `read_file_minion(path, offset, limit)` — a page of a text file from the minion, with
+  absolute line numbers (300 lines per call by default, 2000 at most). Binary files are
+  refused rather than dumped.
+- `grep_file_minion(pattern, path, max_matches)` — recursive `grep -E` over a path on the
+  minion, capped at 100 matches by default.
+
+Every call to either tool is gated: the footer shows the exact call and waits for a key.
+`y` approves it, **anything else denies it**, and a denial is fed back to the model as a
+refusal it is told not to retry. All other inspection tools (the same read-only set a scan
+uses) run without asking. Their output is wrapped in the usual untrusted-data markers with
+a per-session nonce before it reaches the model.
+
+```
+> is root login enabled over ssh?
+- read_file_minion path=/etc/ssh/sshd_config
+approve read_file_minion path=/etc/ssh/sshd_config? [y/N]
+```
+
+Responses stream as they are generated; if the endpoint rejects `stream: true`, the
+session falls back to buffered responses and says so. In-session commands: `/help`,
+`/verbose` (show full tool output instead of the first 12 lines), `/reset`, `/context`,
+`/quit`. `ctrl-c` cancels the running turn, or quits when the input line is empty; `pgup`
+/ `pgdn` scroll the transcript. When the conversation approaches the configured context
+budget it is compacted automatically, exactly as in a scan.
+
+The minion is fixed when the session starts and is checked against `salt-key -L`
+(`--skip-key-check` bypasses that). Since curses owns the terminal, logs are discarded
+unless you pass `--log-file`.
+
 ### Reports
 
 By default, scan reports are written to the worker's stdout. Set `scanning.report_directory`
@@ -170,11 +207,18 @@ salt-security-agent beat
 Run both in separate terminals (or use a process supervisor like systemd or supervisord).
 Example systemd units are provided under `examples/systemd/`.
 
+Investigate a single minion interactively (see [Interactive chat](#interactive-chat)):
+
+```bash
+salt-security-agent chat web-01.example.com
+```
+
 Optional flags:
 
 ```bash
 salt-security-agent worker --config /etc/salt-security-agent/config.toml --loglevel DEBUG
 salt-security-agent beat   --config /etc/salt-security-agent/config.toml --loglevel INFO
+salt-security-agent chat   web-01.example.com --log-file /tmp/chat.log
 ```
 
 ## File layout
@@ -194,11 +238,14 @@ salt-security-agent/
     ├── tasks.py                       # Celery tasks
     ├── scheduler.py                   # Minion picker (Redis)
     ├── llm_agent.py                   # Main LLM tool-calling loop
-    ├── llm_client.py                  # Shared LLM transport (httpx, retries, data wrapping)
+    ├── llm_client.py                  # Shared LLM transport (httpx, retries, streaming, compaction)
     ├── subagent.py                    # Delegated sub-agent loop
+    ├── chat.py                        # Interactive chat session (approval-gated tools)
+    ├── chat_ui.py                     # Curses front end for the chat
     └── tools/
         ├── registry.py                # Tool schemas + inspection-tool dispatch
         ├── minion_tools.py            # ls_minion, get_processes, get_cron_jobs, ...
+        │                              # plus chat-only read_file_minion / grep_file_minion
         ├── repo_tools.py              # list_repo_files, read_repo_file, grep_repo
         ├── report_tool.py             # create_report (Markdown rendering)
         └── alert_tool.py              # send_alert (log + optional SMTP)

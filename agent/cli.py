@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -86,6 +87,52 @@ def scan(minion: str | None, scan_all: bool, config: str) -> None:
 
     result = scan_minion.delay(minion)
     click.echo(f"Task enqueued. ID: {result.id}")
+
+
+@cli.command()
+@click.argument("minion")
+@click.option("--config", default=DEFAULT_CONFIG_PATH, show_default=True, help="Path to config file.")
+@click.option("--log-file", default=None, help="Write agent logs here instead of discarding them.")
+@click.option("--skip-key-check", is_flag=True, help="Do not check MINION against salt-key.")
+def chat(minion: str, config: str, log_file: str | None, skip_key_check: bool) -> None:
+    """Investigate MINION interactively in a terminal chat.
+
+    Unlike a scan, this session can read arbitrary files from the minion — every such
+    call has to be approved by you before it runs.
+    """
+    os.environ[CONFIG_PATH_ENV_VAR] = config
+
+    from agent.config import load_config
+
+    cfg = load_config()
+
+    if not skip_key_check:
+        from agent.scheduler import _list_accepted_minions
+
+        accepted = _list_accepted_minions()
+        if minion not in accepted:
+            raise click.BadParameter(
+                f"Minion '{minion}' is not in the list of accepted minions.",
+                param_hint="MINION",
+            )
+
+    # curses owns the screen: anything logged to stderr would corrupt it.
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+    if log_file:
+        handler = logging.FileHandler(log_file)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+    else:
+        root.addHandler(logging.NullHandler())
+
+    from agent.chat import ChatSession
+    from agent.chat_ui import run_chat_ui
+
+    session = ChatSession(minion=minion, llm_cfg=cfg.llm, salt_cfg=cfg.salt)
+    run_chat_ui(session)
 
 
 @cli.command("flush-queue")

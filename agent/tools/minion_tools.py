@@ -7,8 +7,24 @@ import subprocess
 _MINION_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 _MAX_MINION_LEN = 253
 
+# The salt CLI turns any single-line argument that looks like `name=value` into a
+# keyword argument (salt.utils.args.KWARG_REGEX). A script opening with a shell
+# variable assignment would therefore be swallowed whole as a kwarg, leaving
+# cmd.run without its positional `cmd`, so prefix such commands with a no-op.
+_SALT_KWARG_LEADER = re.compile(r"^[^\d\W][\w.-]*=")
+
 SALT_CLI_TIMEOUT = 45
 SUBPROCESS_TIMEOUT = 90
+
+# Paging limits for `read_file_minion`, which is chat-only and operator-approved.
+DEFAULT_READ_LINES = 300
+MAX_READ_LINES = 2000
+MAX_READ_CHARS = 200_000
+
+# Result limits for `grep_file_minion`.
+DEFAULT_GREP_MATCHES = 100
+MAX_GREP_MATCHES = 500
+GREP_EXCLUDED_DIRS = (".git", "node_modules", "__pycache__", "proc", "sys", "dev")
 
 
 def validate_minion(minion: str) -> str:
@@ -23,15 +39,25 @@ def validate_minion(minion: str) -> str:
 
 def salt_run(minion: str, command: str) -> str:
     validate_minion(minion)
+    if _SALT_KWARG_LEADER.match(command):
+        command = f":; {command}"
     result = subprocess.run(
         ["salt", "-t", str(SALT_CLI_TIMEOUT), minion, "cmd.run", command, "--out=txt"],
         capture_output=True,
         text=True,
         timeout=SUBPROCESS_TIMEOUT,
     )
+    # Salt passes the remote exit code through, so a non-zero return says nothing
+    # about whether the command produced usable output -- `find`, `grep` and
+    # friends routinely exit non-zero with a perfectly good result on stdout.
+    # Salt's own failures (no response, auth errors) also land on stdout and are
+    # more informative than the generic stderr line.
+    output = result.stdout.strip()
+    if output:
+        return output
     if result.returncode != 0 and result.stderr:
         return f"ERROR: {result.stderr.strip()}"
-    return result.stdout.strip()
+    return output
 
 
 def ls_minion(minion: str, path: str) -> str:
@@ -46,6 +72,109 @@ def file_minion(minion: str, path: str) -> str:
     if not isinstance(path, str) or not path:
         raise ValueError("path must be a non-empty string")
     return salt_run(minion, f"file {shlex.quote(path)}")
+
+
+def _truncate(output: str, limit: int, what: str) -> str:
+    if len(output) <= limit:
+        return output
+    return f"{output[:limit]}\n... [{what} truncated at {limit} characters]"
+
+
+def read_file_minion(
+    minion: str,
+    path: str,
+    offset: int = 1,
+    limit: int | None = None,
+) -> str:
+    """Read a page of a text file on the minion, prefixed with absolute line numbers.
+
+    Chat-only and operator-approved: this is the one tool that can pull arbitrary
+    file contents off a minion, so it never appears in the unattended scan toolset.
+    Reads at most MAX_READ_LINES lines starting at `offset` (1-based); binary files
+    are refused rather than dumped.
+    """
+    if not isinstance(path, str) or not path:
+        raise ValueError("path must be a non-empty string")
+    if offset is None:
+        start = 1
+    else:
+        try:
+            start = max(1, int(offset))
+        except (TypeError, ValueError):
+            raise ValueError(f"offset must be an integer line number, got {offset!r}")
+    if limit is None:
+        count = DEFAULT_READ_LINES
+    else:
+        try:
+            count = int(limit)
+        except (TypeError, ValueError):
+            raise ValueError(f"limit must be an integer, got {limit!r}")
+        count = max(1, min(count, MAX_READ_LINES))
+    end = start + count - 1
+
+    script = (
+        f"p={shlex.quote(path)}; "
+        '[ -e "$p" ] || { echo "ERROR: no such path: $p"; exit 0; }; '
+        '[ -f "$p" ] || { echo "ERROR: not a regular file: $p"; exit 0; }; '
+        '[ -r "$p" ] || { echo "ERROR: not readable by the salt minion user: $p"; exit 0; }; '
+        'n=$(head -c 8192 "$p" | wc -c); m=$(head -c 8192 "$p" | tr -d "\\000" | wc -c); '
+        '[ "$n" = "$m" ] || '
+        '{ echo "ERROR: file looks binary (NUL bytes); use file_minion instead: $p"; exit 0; }; '
+        'total=$(awk "END{print NR}" "$p"); '
+        f'echo "--- $p (lines {start}-{end} of $total) ---"; '
+        f"awk -v s={start} -v e={end} "
+        "'NR>=s&&NR<=e{printf \"%6d| %s\\n\", NR, substr($0,1,1000)} NR>e{exit}' \"$p\""
+    )
+    output = salt_run(minion, script)
+    if not output:
+        return f"(no output; {path} may be empty or unreadable)"
+    return _truncate(output, MAX_READ_CHARS, "file read")
+
+
+def grep_file_minion(
+    minion: str,
+    pattern: str,
+    path: str,
+    max_matches: int | None = None,
+) -> str:
+    """Recursively grep a path on the minion for an extended regular expression.
+
+    Chat-only and operator-approved, like `read_file_minion`. Binary files are
+    skipped, long lines are cut, and the match count is capped so a broad pattern
+    cannot flood the context.
+    """
+    if not isinstance(pattern, str) or not pattern:
+        raise ValueError("pattern must be a non-empty string")
+    if not isinstance(path, str) or not path:
+        raise ValueError("path must be a non-empty string")
+    if max_matches is None:
+        cap = DEFAULT_GREP_MATCHES
+    else:
+        try:
+            cap = int(max_matches)
+        except (TypeError, ValueError):
+            raise ValueError(f"max_matches must be an integer, got {max_matches!r}")
+        cap = max(1, min(cap, MAX_GREP_MATCHES))
+
+    excludes = " ".join(f"--exclude-dir={d}" for d in GREP_EXCLUDED_DIRS)
+    script = (
+        f"p={shlex.quote(path)}; "
+        '[ -e "$p" ] || { echo "ERROR: no such path: $p"; exit 0; }; '
+        f"grep -rnIE {excludes} -e {shlex.quote(pattern)} -- \"$p\" 2>/dev/null "
+        f"| cut -c1-500 | head -n {cap}"
+    )
+    output = salt_run(minion, script)
+    if not output:
+        return f"No matches for pattern {pattern!r} under {path}"
+    # `--out=txt` prefixes every line with `<minion>: `, so the in-band guards
+    # from the script arrive prefixed while salt_run's own errors do not.
+    first_line = output.split("\n", 1)[0]
+    if first_line.startswith(("ERROR:", f"{minion}: ERROR:")):
+        return output
+    matches = output.count("\n") + 1
+    if matches >= cap:
+        output += f"\n... [stopped at {cap} matches; narrow the pattern or the path]"
+    return _truncate(output, MAX_READ_CHARS, "grep output")
 
 
 def get_os_info(minion: str) -> str:
