@@ -135,7 +135,13 @@ INVESTIGATION_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_listening_ports",
-            "description": "Return TCP and UDP listening sockets on the minion with the owning process (ss -tulpen).",
+            "description": (
+                "Return TCP and UDP listening sockets on the minion with the owning "
+                "process (ss -tulpen), plus a SCOPE column saying whether each socket "
+                "belongs to a host process, a container, or a container port-forwarding "
+                "helper. A 0.0.0.0 bind only means 'exposed on all host interfaces' when "
+                "SCOPE is host."
+            ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
