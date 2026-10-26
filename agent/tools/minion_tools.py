@@ -231,8 +231,46 @@ def get_failed_services(minion: str) -> str:
 
 
 def get_listening_ports(minion: str) -> str:
-    """Return TCP and UDP listening sockets with associated processes (ss -tulpen)."""
-    return salt_run(minion, "ss -tulpen")
+    """Return TCP and UDP listening sockets with associated processes (ss -tulpen).
+
+    Each row gets a SCOPE column derived from the owning PID's cgroup, because a
+    container that binds 0.0.0.0 inside its own namespace is not the same risk as
+    a host daemon on all host interfaces, and raw `ss` output cannot tell them
+    apart.
+    """
+    awk = (
+        'NR==1{print $0"  SCOPE";next}'
+        'function classify(l){'
+        'if(match(l,/(docker|libpod|crio|cri-containerd)-[0-9a-f]{6,}/))'
+        '{id=substr(l,RSTART,RLENGTH);sub(/^[a-z-]+-/,"",id);'
+        'return "container:" substr(id,1,12)}'
+        'if(l~/kubepods|\\/lxc\\/|lxc\\.payload|\\/docker\\/[0-9a-f]/)return "container";'
+        'return ""}'
+        '{scope="";comm="";'
+        'if(match($0,/"[^"]+"/))comm=substr($0,RSTART+1,RLENGTH-2);'
+        'if(match($0,/cgroup:[^ ]+/))scope=classify(substr($0,RSTART,RLENGTH));'
+        'if(scope==""&&match($0,/pid=[0-9]+/)){'
+        'pid=substr($0,RSTART+4,RLENGTH-4);cg="/proc/" pid "/cgroup";'
+        'while((getline l<cg)>0){scope=classify(l);if(scope!="")break}'
+        'close(cg)}'
+        'if(scope=="")scope=($0~/cgroup:|pid=/)?"host":"unknown";'
+        'if(scope=="host"&&(comm=="docker-proxy"||comm=="rootlesskit"||comm=="slirp4netns"))'
+        'scope="host-portmap->container";'
+        'print $0"  "scope}'
+    )
+    legend = (
+        "echo '--- legend: SCOPE column ---'; "
+        "echo 'host                  = process runs directly on the host; "
+        "a 0.0.0.0 bind really is exposed on every host interface'; "
+        "echo 'container:<id>        = process runs inside that container; "
+        "a 0.0.0.0 bind is inside the container network namespace, not the host'; "
+        "echo 'host-portmap->container = port-forwarding helper (docker-proxy/rootlesskit); "
+        "the listen address shown is the host-side publish address chosen by the "
+        "container runtime -- check get_containers for the mapping'; "
+        "echo 'unknown               = no owning PID visible (ss lacked permission)'; "
+        "echo; "
+    )
+    return salt_run(minion, f"{legend}ss -tulpen | awk '{awk}'")
 
 
 def get_suid_files(minion: str) -> str:
