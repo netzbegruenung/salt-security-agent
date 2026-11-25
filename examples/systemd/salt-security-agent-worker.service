@@ -19,12 +19,18 @@ TimeoutStopSec=30
 
 # Hardening. The salt CLI (salt, salt-key) and the Salt state repo
 # (config: [salt].repo_path) must be reachable for the salt-security-agent user.
-# Extend ReadWritePaths / ReadOnlyPaths as needed for your environment.
+# The config directory (config, API token, threat models, tasks) is read-only
+# for the service: the process that talks to the LLM must not be able to
+# rewrite its own instructions or settings. The only writable location is the
+# state directory /var/lib/salt-security-agent; point
+# [scanning].report_directory there (e.g. /var/lib/salt-security-agent/reports).
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/etc/salt-security-agent
+ReadOnlyPaths=/etc/salt-security-agent
+StateDirectory=salt-security-agent
+StateDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target

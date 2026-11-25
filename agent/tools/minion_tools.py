@@ -24,7 +24,11 @@ MAX_READ_CHARS = 200_000
 # Result limits for `grep_file_minion`.
 DEFAULT_GREP_MATCHES = 100
 MAX_GREP_MATCHES = 500
-GREP_EXCLUDED_DIRS = (".git", "node_modules", "__pycache__", "proc", "sys", "dev")
+
+# Limits on model-supplied paths and patterns. Short enough that the operator can
+# read a whole approval prompt, which shows these values in full.
+MAX_PATH_LEN = 1024
+MAX_PATTERN_LEN = 512
 
 
 def validate_minion(minion: str) -> str:
@@ -60,18 +64,77 @@ def salt_run(minion: str, command: str) -> str:
     return output
 
 
-def ls_minion(minion: str, path: str) -> str:
-    """Run 'ls -la <path>' on the given Salt minion."""
+def validate_path(path: object) -> str:
+    """Check a model-supplied minion path and return it unchanged.
+
+    Only plain absolute paths pass: a leading `/` keeps the value from ever being
+    parsed as a command-line option (`file -f<path>` dumps file contents), and
+    rejecting `..` and non-printable characters means the path the operator sees
+    in an approval prompt is the path that is opened.
+    """
     if not isinstance(path, str) or not path:
         raise ValueError("path must be a non-empty string")
-    return salt_run(minion, f"ls -la {shlex.quote(path)}")
+    if len(path) > MAX_PATH_LEN:
+        raise ValueError(f"path is longer than {MAX_PATH_LEN} characters")
+    if not path.startswith("/"):
+        raise ValueError(f"path must be absolute (start with '/'): {path!r}")
+    if not path.isprintable():
+        raise ValueError(f"path contains non-printable characters: {path!r}")
+    if ".." in path.split("/"):
+        raise ValueError(f"path must not contain '..' components: {path!r}")
+    return path
+
+
+def _strip_salt_prefix(minion: str, line: str) -> str:
+    """Drop the `<minion>: ` prefix that `--out=txt` puts on every output line."""
+    prefix = f"{minion}: "
+    return line[len(prefix):] if line.startswith(prefix) else line
+
+
+def ls_minion(minion: str, path: str) -> str:
+    """Run 'ls -la <path>' on the given Salt minion."""
+    validate_path(path)
+    return salt_run(minion, f"ls -la -- {shlex.quote(path)}")
 
 
 def file_minion(minion: str, path: str) -> str:
     """Run 'file <path>' on the given Salt minion to identify the file type."""
-    if not isinstance(path, str) or not path:
-        raise ValueError("path must be a non-empty string")
-    return salt_run(minion, f"file {shlex.quote(path)}")
+    validate_path(path)
+    return salt_run(minion, f"file -- {shlex.quote(path)}")
+
+
+def resolve_path_minion(minion: str, path: str) -> str:
+    """Return the canonical path of an existing regular file on the minion.
+
+    Symlinks are followed here, before the operator is asked, so that the approval
+    prompt can name the file that will really be opened. The result goes through
+    `validate_path` as well: a target whose name cannot be displayed faithfully is
+    refused rather than shown in a misleading form.
+    """
+    validate_path(path)
+    script = (
+        f"p={shlex.quote(path)}; "
+        'r=$(realpath -e -- "$p" 2>/dev/null) || { echo "ERROR: no such path: $p"; exit 0; }; '
+        '[ -f "$r" ] || { echo "ERROR: not a regular file: $r"; exit 0; }; '
+        'printf "RESOLVED:%s\n" "$r"'
+    )
+    output = salt_run(minion, script)
+    lines = [_strip_salt_prefix(minion, line) for line in output.splitlines()]
+    if len(lines) != 1 or not lines[0].startswith("RESOLVED:"):
+        detail = lines[0] if len(lines) == 1 else "unexpected output from the minion"
+        raise ValueError(f"could not resolve {path!r}: {detail}")
+    return validate_path(lines[0][len("RESOLVED:"):])
+
+
+# Shell guard shared by the operator-approved file tools. `$p` must already be the
+# canonical path the operator approved; if it is (or has since become) a symlink,
+# or any directory above it has, the call is refused instead of following it.
+_CANONICAL_FILE_GUARD = (
+    '[ -e "$p" ] || { echo "ERROR: no such path: $p"; exit 0; }; '
+    '[ "$(realpath -e -- "$p" 2>/dev/null)" = "$p" ] || '
+    '{ echo "ERROR: not a canonical path (symlink, or changed since approval): $p"; exit 0; }; '
+    '[ -f "$p" ] || { echo "ERROR: not a regular file: $p"; exit 0; }; '
+)
 
 
 def _truncate(output: str, limit: int, what: str) -> str:
@@ -91,10 +154,10 @@ def read_file_minion(
     Chat-only and operator-approved: this is the one tool that can pull arbitrary
     file contents off a minion, so it never appears in the unattended scan toolset.
     Reads at most MAX_READ_LINES lines starting at `offset` (1-based); binary files
-    are refused rather than dumped.
+    are refused rather than dumped. `path` must be canonical (see
+    `resolve_path_minion`): symlinks are refused, not followed.
     """
-    if not isinstance(path, str) or not path:
-        raise ValueError("path must be a non-empty string")
+    validate_path(path)
     if offset is None:
         start = 1
     else:
@@ -114,9 +177,8 @@ def read_file_minion(
 
     script = (
         f"p={shlex.quote(path)}; "
-        '[ -e "$p" ] || { echo "ERROR: no such path: $p"; exit 0; }; '
-        '[ -f "$p" ] || { echo "ERROR: not a regular file: $p"; exit 0; }; '
-        '[ -r "$p" ] || { echo "ERROR: not readable by the salt minion user: $p"; exit 0; }; '
+        + _CANONICAL_FILE_GUARD
+        + '[ -r "$p" ] || { echo "ERROR: not readable by the salt minion user: $p"; exit 0; }; '
         'n=$(head -c 8192 "$p" | wc -c); m=$(head -c 8192 "$p" | tr -d "\\000" | wc -c); '
         '[ "$n" = "$m" ] || '
         '{ echo "ERROR: file looks binary (NUL bytes); use file_minion instead: $p"; exit 0; }; '
@@ -137,16 +199,20 @@ def grep_file_minion(
     path: str,
     max_matches: int | None = None,
 ) -> str:
-    """Recursively grep a path on the minion for an extended regular expression.
+    """Grep one regular file on the minion for an extended regular expression.
 
-    Chat-only and operator-approved, like `read_file_minion`. Binary files are
-    skipped, long lines are cut, and the match count is capped so a broad pattern
-    cannot flood the context.
+    Chat-only and operator-approved, like `read_file_minion`. Deliberately not
+    recursive: one approval covers exactly one file. `path` must be canonical
+    (see `resolve_path_minion`). Binary files are skipped, long lines are cut, and
+    the match count is capped so a broad pattern cannot flood the context.
     """
     if not isinstance(pattern, str) or not pattern:
         raise ValueError("pattern must be a non-empty string")
-    if not isinstance(path, str) or not path:
-        raise ValueError("path must be a non-empty string")
+    if len(pattern) > MAX_PATTERN_LEN:
+        raise ValueError(f"pattern is longer than {MAX_PATTERN_LEN} characters")
+    if not pattern.isprintable():
+        raise ValueError("pattern contains non-printable characters")
+    validate_path(path)
     if max_matches is None:
         cap = DEFAULT_GREP_MATCHES
     else:
@@ -156,16 +222,15 @@ def grep_file_minion(
             raise ValueError(f"max_matches must be an integer, got {max_matches!r}")
         cap = max(1, min(cap, MAX_GREP_MATCHES))
 
-    excludes = " ".join(f"--exclude-dir={d}" for d in GREP_EXCLUDED_DIRS)
     script = (
         f"p={shlex.quote(path)}; "
-        '[ -e "$p" ] || { echo "ERROR: no such path: $p"; exit 0; }; '
-        f"grep -rnIE {excludes} -e {shlex.quote(pattern)} -- \"$p\" 2>/dev/null "
+        + _CANONICAL_FILE_GUARD
+        + f"grep -nIE -e {shlex.quote(pattern)} -- \"$p\" 2>/dev/null "
         f"| cut -c1-500 | head -n {cap}"
     )
     output = salt_run(minion, script)
     if not output:
-        return f"No matches for pattern {pattern!r} under {path}"
+        return f"No matches for pattern {pattern!r} in {path}"
     # `--out=txt` prefixes every line with `<minion>: `, so the in-band guards
     # from the script arrive prefixed while salt_run's own errors do not.
     first_line = output.split("\n", 1)[0]
@@ -173,7 +238,7 @@ def grep_file_minion(
         return output
     matches = output.count("\n") + 1
     if matches >= cap:
-        output += f"\n... [stopped at {cap} matches; narrow the pattern or the path]"
+        output += f"\n... [stopped at {cap} matches; narrow the pattern]"
     return _truncate(output, MAX_READ_CHARS, "grep output")
 
 
@@ -289,11 +354,20 @@ def get_users(minion: str) -> str:
     )
 
 
-def get_cron_jobs(minion: str) -> str:
-    """Return root's crontab and a listing of cron.* directories."""
+def get_cron_jobs(minion: str, include_root_crontab: bool = False) -> str:
+    """Return a listing of the cron.* directories, plus root's crontab if allowed.
+
+    The crontab is file content, so it is only included when the operator has
+    consented to that read (config pre-approval, or a per-call approval in chat).
+    """
+    crontab = (
+        "crontab -l 2>/dev/null; "
+        if include_root_crontab
+        else "echo '(not shown: reading root crontab has not been approved by the operator)'; "
+    )
     return salt_run(
         minion,
-        "echo '--- root crontab ---'; crontab -l 2>/dev/null; "
+        f"echo '--- root crontab ---'; {crontab}"
         "for d in /etc/cron.d /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly; do "
         "echo \"--- $d ---\"; ls -la \"$d\" 2>/dev/null; done",
     )

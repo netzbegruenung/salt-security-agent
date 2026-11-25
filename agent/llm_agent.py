@@ -21,10 +21,10 @@ from agent.llm_client import (
 from agent.subagent import run_subagent
 from agent.tools.alert_tool import send_alert
 from agent.tools.registry import (
-    INVESTIGATION_TOOLS,
     REPORTING_TOOLS,
     SPAWN_SUBAGENT_TOOL,
     call_investigation_tool,
+    investigation_tools,
 )
 from agent.tools.report_tool import create_report
 
@@ -166,7 +166,7 @@ def run_agent(
     threat_model = threat_model_path.read_text(encoding="utf-8")
     task = task_path.read_text(encoding="utf-8")
 
-    tools = list(INVESTIGATION_TOOLS) + list(REPORTING_TOOLS)
+    tools = investigation_tools(salt_cfg) + list(REPORTING_TOOLS)
     if subagent_cfg.enabled:
         tools.append(SPAWN_SUBAGENT_TOOL)
 

@@ -31,6 +31,14 @@ task_path = "tasks/"
 
 [salt]
 repo_path = "/srv/salt"
+# Optional. Fixed minion files the agent may read without asking. Default: none.
+# Unattended scans cannot ask, so a tool whose file is not listed is withheld
+# (get_os_info, get_users) or omits that part (get_cron_jobs still lists the
+# cron directories). The interactive chat asks the operator per call instead.
+#   "/etc/os-release"  -> get_os_info
+#   "/etc/passwd"      -> get_users (name, uid, gid, home, shell)
+#   "root-crontab"     -> get_cron_jobs (output of `crontab -l` as root)
+# preapproved_file_reads = ["/etc/os-release", "/etc/passwd", "root-crontab"]
 
 [celery]
 broker_url = "redis://localhost:6379/0"

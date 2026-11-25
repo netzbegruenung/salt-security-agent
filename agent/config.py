@@ -61,9 +61,16 @@ class SubagentConfig:
     max_iterations: int = 25
 
 
+# Fixed file reads that some inspection tools perform on a minion. None of them
+# happens unless the operator consents: either up front, by listing the entry in
+# `salt.preapproved_file_reads`, or per call in the interactive chat.
+KNOWN_FILE_READS = frozenset({"/etc/os-release", "/etc/passwd", "root-crontab"})
+
+
 @dataclass
 class SaltConfig:
     repo_path: Path
+    preapproved_file_reads: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -147,6 +154,16 @@ def load_config(path: str | Path | None = None) -> Config:
             f"subagents.max_iterations must be at least 1, got {subagent_cfg.max_iterations!r}"
         )
 
+    preapproved = salt.get("preapproved_file_reads", [])
+    if not isinstance(preapproved, list) or not all(isinstance(p, str) for p in preapproved):
+        raise ValueError("salt.preapproved_file_reads must be a list of strings")
+    unknown = sorted(set(preapproved) - KNOWN_FILE_READS)
+    if unknown:
+        raise ValueError(
+            f"salt.preapproved_file_reads contains unknown entries {unknown}; "
+            f"allowed values are {sorted(KNOWN_FILE_READS)}"
+        )
+
     report_directory = s.get("report_directory")
     return Config(
         scanning=ScanningConfig(
@@ -167,6 +184,7 @@ def load_config(path: str | Path | None = None) -> Config:
         ),
         salt=SaltConfig(
             repo_path=Path(salt["repo_path"]),
+            preapproved_file_reads=frozenset(preapproved),
         ),
         celery=CeleryConfig(
             broker_url=c["broker_url"],

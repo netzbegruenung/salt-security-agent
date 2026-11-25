@@ -24,9 +24,13 @@ Both are needed for normal operation.
    in both `ExecStart` lines).
 
    ```bash
-   install -d -o salt-security-agent -g salt-security-agent -m 0750 /etc/salt-security-agent
-   install -o salt-security-agent -g salt-security-agent -m 0640 config.toml /etc/salt-security-agent/config.toml
+   install -d -o root -g salt-security-agent -m 0750 /etc/salt-security-agent
+   install -o root -g salt-security-agent -m 0640 config.toml /etc/salt-security-agent/config.toml
    ```
+
+   The directory and everything in it (config, threat models, tasks) belong to
+   `root`; the service user can read them through its group but cannot change
+   them. Install `threat_models/` and `tasks/` the same way.
 
 ## Install
 
@@ -51,6 +55,9 @@ journalctl -u salt-security-agent-beat -f
 - `KillMode=mixed` with `TimeoutStopSec=30` gives the worker a 30 s window to
   finish in-flight scans on shutdown. Increase if your scans typically run
   longer.
-- The hardening directives (`ProtectSystem=strict`, `ProtectHome=true`, etc.)
-  assume the agent only needs to write under `/etc/salt-security-agent`. If you point
-  it at logs or a Beat schedule file elsewhere, extend `ReadWritePaths=`.
+- The agent has no write access to its own configuration: `/etc/salt-security-agent`
+  is owned by `root` and mounted read-only for both units (`ReadOnlyPaths=`).
+- The worker can write only to its state directory `/var/lib/salt-security-agent`
+  (`StateDirectory=`, created by systemd). Set `scanning.report_directory` to a path
+  below it, e.g. `/var/lib/salt-security-agent/reports`. If you write logs or reports
+  elsewhere, add `ReadWritePaths=` for that location.

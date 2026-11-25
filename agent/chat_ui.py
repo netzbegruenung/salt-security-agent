@@ -9,9 +9,11 @@ the prompt in the footer — that is the whole point of the approval gate.
 from __future__ import annotations
 
 import curses
+import json
 import locale
 import queue
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,6 +24,9 @@ MODE_BUSY = "busy"
 MODE_APPROVAL = "approval"
 
 PREVIEW_LINES = 12
+# Keys pressed this soon after an approval prompt appears are ignored: they were
+# aimed at whatever was on screen before it (type-ahead, key repeat, a second `y`).
+APPROVAL_GRACE_SECONDS = 0.6
 MAX_INPUT_HISTORY = 100
 
 HELP_TEXT = (
@@ -35,8 +40,8 @@ HELP_TEXT = (
     "  enter      send      pgup/pgdn  scroll      up/down  recall input\n"
     "  ctrl-c     cancel the running turn, or quit when the input is empty\n"
     "Approval:\n"
-    "  read_file_minion and grep_file_minion ask before every call; y approves,\n"
-    "  anything else denies."
+    "  every tool call that reads file content asks first and shows the exact\n"
+    "  file; y approves, anything else denies. One approval covers one file."
 )
 
 
@@ -50,7 +55,7 @@ class _Block:
 @dataclass
 class _Approval:
     name: str
-    arguments: dict[str, Any]
+    shown: dict[str, Any]
     event: threading.Event = field(default_factory=threading.Event)
     approved: bool = False
 
@@ -63,6 +68,24 @@ def _format_arguments(arguments: dict[str, Any]) -> str:
             text = text[:117] + "..."
         parts.append(f"{key}={text}")
     return " ".join(parts)
+
+
+def _format_approval(name: str, shown: dict[str, Any]) -> str:
+    """The complete call the operator is asked to approve: never truncated.
+
+    Every value is quoted and anything that is not a printable character is shown
+    as an escape sequence, so trailing spaces, control characters, and Unicode
+    direction overrides cannot make one path look like another.
+    """
+    lines = [f"APPROVAL REQUIRED: {name}"]
+    for key, value in shown.items():
+        quoted = json.dumps(value, ensure_ascii=False, default=repr)
+        escaped = "".join(
+            char if char.isprintable() else char.encode("unicode_escape").decode("ascii")
+            for char in quoted
+        )
+        lines.append(f"  {key} = {escaped}")
+    return "\n".join(lines)
 
 
 def _sanitize(text: str) -> str:
@@ -112,6 +135,7 @@ class CursesChatUI:
         self._scroll = 0
         self._verbose = False
         self._pending: _Approval | None = None
+        self._approval_shown_at = 0.0
         self._worker: threading.Thread | None = None
         self._quit = False
         self._streaming = False
@@ -133,8 +157,8 @@ class CursesChatUI:
     def on_notice(self, text: str) -> None:
         self._events.put(("notice", text))
 
-    def request_approval(self, name: str, arguments: dict[str, Any]) -> bool:
-        approval = _Approval(name=name, arguments=arguments)
+    def request_approval(self, name: str, shown: dict[str, Any]) -> bool:
+        approval = _Approval(name=name, shown=shown)
         self._events.put(("approval", approval))
         approval.event.wait()
         return approval.approved
@@ -184,6 +208,18 @@ class CursesChatUI:
                 self._pending = event[1]
                 self._mode = MODE_APPROVAL
                 self._status = "approval required"
+                # The full call goes into the transcript, where it can wrap over as
+                # many lines as it needs; the footer only asks the question.
+                self._append(
+                    "approval", _format_approval(self._pending.name, self._pending.shown)
+                )
+                self._scroll = 0
+                # Drop type-ahead so a key pressed before the prompt cannot answer it.
+                try:
+                    curses.flushinp()
+                except curses.error:
+                    pass
+                self._approval_shown_at = time.monotonic()
             elif kind == "end":
                 self._mode = MODE_INPUT
                 self._status = "ready"
@@ -204,7 +240,17 @@ class CursesChatUI:
                     text += f"\n[{hidden} more line(s); /verbose to show]"
             prefix = block.prefix
             indent = " " * len(prefix)
-            wrapped = _wrap(text, width - len(prefix))
+            if block.kind == "approval":
+                # Hard wrap: word wrapping drops spaces at line breaks, and here
+                # every character of the path matters.
+                step = max(8, width)
+                wrapped = [
+                    raw[i : i + step]
+                    for raw in text.split("\n")
+                    for i in range(0, max(len(raw), 1), step)
+                ]
+            else:
+                wrapped = _wrap(text, width - len(prefix))
             for index, line in enumerate(wrapped):
                 lines.append((block.kind, (prefix if index == 0 else indent) + line))
             if block.kind in {"user", "assistant"}:
@@ -226,6 +272,7 @@ class CursesChatUI:
             "result": curses.color_pair(4),
             "notice": curses.color_pair(5),
             "error": curses.color_pair(6),
+            "approval": curses.color_pair(6) | curses.A_BOLD,
         }.get(kind, curses.A_NORMAL)
 
     @staticmethod
@@ -283,8 +330,7 @@ class CursesChatUI:
     def _draw_footer(self, stdscr, height: int, width: int) -> None:
         row = height - 1
         if self._mode == MODE_APPROVAL and self._pending is not None:
-            call = f"{self._pending.name} {_format_arguments(self._pending.arguments)}"
-            prompt = f"approve {call}? [y/N] "
+            prompt = f"approve the {self._pending.name} call shown above? [y/N] "
             attr = curses.color_pair(6) | curses.A_BOLD if curses.has_colors() else curses.A_REVERSE
             self._put(stdscr, row, 0, prompt[: width - 1], attr)
             curses.curs_set(0)
@@ -324,6 +370,8 @@ class CursesChatUI:
             return
 
         if self._mode == MODE_APPROVAL:
+            if time.monotonic() - self._approval_shown_at < APPROVAL_GRACE_SECONDS:
+                return
             self._resolve_approval(char is not None and char in "yY")
             return
         if self._mode == MODE_BUSY:
