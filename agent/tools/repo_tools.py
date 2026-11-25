@@ -6,10 +6,17 @@ from pathlib import Path
 
 
 def _safe_resolve(repo_path: Path, rel_path: str) -> Path:
-    """Resolve rel_path under repo_path and raise if it escapes the root."""
+    """Resolve rel_path under repo_path and raise if it escapes the root.
+
+    Git metadata is off limits as well: `.git` holds the full history, including
+    anything (secrets, old pillar data) that was once committed and later removed.
+    """
+    root = repo_path.resolve()
     resolved = (repo_path / rel_path).resolve()
-    if not resolved.is_relative_to(repo_path.resolve()):
+    if not resolved.is_relative_to(root):
         raise ValueError(f"Path traversal attempt: {rel_path!r}")
+    if ".git" in resolved.relative_to(root).parts:
+        raise ValueError(f"Git metadata is not readable: {rel_path!r}")
     return resolved
 
 
@@ -78,7 +85,11 @@ def grep_repo(
             file_path = Path(root) / file
             # A symlink inside the repo may point anywhere on the master; only
             # read files that really live under the repo root.
-            if not file_path.resolve().is_relative_to(repo_root):
+            real_path = file_path.resolve()
+            if not real_path.is_relative_to(repo_root):
+                continue
+            # Covers `.git` files (worktrees, submodules) and symlinks into `.git`.
+            if ".git" in real_path.relative_to(repo_root).parts:
                 continue
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")

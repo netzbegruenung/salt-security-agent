@@ -57,7 +57,9 @@ journalctl -u salt-security-agent-beat -f
   longer.
 - The agent has no write access to its own configuration: `/etc/salt-security-agent`
   is owned by `root` and mounted read-only for both units (`ReadOnlyPaths=`).
-- The worker can write only to its state directory `/var/lib/salt-security-agent`
+- Both units run as the unprivileged `salt-security-agent` user. Beat keeps its
+  schedule database in the state directory (`--schedule` in its `ExecStart`).
+- The units can write only to the state directory `/var/lib/salt-security-agent`
   (`StateDirectory=`, created by systemd). Set `scanning.report_directory` to a path
   below it, e.g. `/var/lib/salt-security-agent/reports`. If you write logs or reports
   elsewhere, add `ReadWritePaths=` for that location.

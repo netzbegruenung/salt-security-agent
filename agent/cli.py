@@ -36,7 +36,12 @@ def worker(config: str, loglevel: str) -> None:
 @cli.command()
 @click.option("--config", default=DEFAULT_CONFIG_PATH, show_default=True, help="Path to config file.")
 @click.option("--loglevel", default="INFO", show_default=True, help="Log level.")
-def beat(config: str, loglevel: str) -> None:
+@click.option(
+    "--schedule",
+    default=None,
+    help="Path of the Beat schedule database (default: celerybeat-schedule in the working directory).",
+)
+def beat(config: str, loglevel: str, schedule: str | None) -> None:
     """Start the Celery Beat scheduler."""
     os.environ[CONFIG_PATH_ENV_VAR] = config
     from agent.config import load_config  # noqa: F401
@@ -48,6 +53,8 @@ def beat(config: str, loglevel: str) -> None:
         "beat",
         f"--loglevel={loglevel}",
     ]
+    if schedule:
+        cmd.append(f"--schedule={schedule}")
     subprocess.run(cmd, check=True)
 
 

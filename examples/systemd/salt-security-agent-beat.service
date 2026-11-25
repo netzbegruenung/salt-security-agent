@@ -6,24 +6,27 @@ Wants=redis.service
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=salt-security-agent
+Group=salt-security-agent
 WorkingDirectory=/etc/salt-security-agent
-ExecStart=/opt/salt-security-agent/venv/bin/salt-security-agent beat --config /etc/salt-security-agent/config.toml --loglevel INFO
+ExecStart=/opt/salt-security-agent/venv/bin/salt-security-agent beat --config /etc/salt-security-agent/config.toml --loglevel INFO --schedule /var/lib/salt-security-agent/celerybeat-schedule
 Restart=on-failure
 RestartSec=5
 
 KillMode=mixed
 TimeoutStopSec=30
 
-# Hardening. Beat writes its schedule database; by default Celery places it
-# in the working directory (celerybeat-schedule). Adjust ReadWritePaths if
-# you point Beat at a different location.
+# Hardening. Beat only reads the config and enqueues tasks on the broker, so
+# it runs unprivileged like the worker. Its schedule database is the one thing
+# it writes; --schedule puts it in the state directory
+# /var/lib/salt-security-agent, the only writable location.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadOnlyPaths=/etc/salt-security-agent /srv/salt-security-agent
-ReadWritePaths=/srv/salt-security-reports /root/.local
+ProtectHome=true
+ReadOnlyPaths=/etc/salt-security-agent
+StateDirectory=salt-security-agent
+StateDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target
