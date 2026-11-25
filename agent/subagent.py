@@ -10,14 +10,12 @@ import httpx
 from agent.config import LLMConfig, SaltConfig, SubagentConfig
 from agent.llm_client import post_with_retry, wrap_untrusted
 from agent.tools.registry import (
-    INVESTIGATION_TOOLS,
     SUBMIT_FINDINGS_TOOL,
     call_investigation_tool,
+    investigation_tools,
 )
 
 logger = logging.getLogger(__name__)
-
-SUBAGENT_TOOLS = INVESTIGATION_TOOLS + [SUBMIT_FINDINGS_TOOL]
 
 _VALID_RISK = {"none", "low", "medium", "high", "critical"}
 
@@ -83,6 +81,7 @@ def run_subagent(
     caller before it enters the orchestrator's context.
     """
     label = f"minion {minion} (sub-agent #{index})"
+    subagent_tools = investigation_tools(salt_cfg) + [SUBMIT_FINDINGS_TOOL]
     nonce = secrets.token_hex(8)
 
     user_message = f"# Your Task\n\n{task}"
@@ -119,7 +118,7 @@ def run_subagent(
             {
                 "model": llm_cfg.model,
                 "messages": messages,
-                "tools": SUBAGENT_TOOLS,
+                "tools": subagent_tools,
                 "tool_choice": "auto",
             },
             label,
@@ -209,7 +208,7 @@ def run_subagent(
             {
                 "model": llm_cfg.model,
                 "messages": messages,
-                "tools": SUBAGENT_TOOLS,
+                "tools": subagent_tools,
                 "tool_choice": {"type": "function", "function": {"name": "submit_findings"}},
             },
             label,

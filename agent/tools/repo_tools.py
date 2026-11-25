@@ -76,6 +76,10 @@ def grep_repo(
                 continue
             
             file_path = Path(root) / file
+            # A symlink inside the repo may point anywhere on the master; only
+            # read files that really live under the repo root.
+            if not file_path.resolve().is_relative_to(repo_root):
+                continue
             try:
                 content = file_path.read_text(encoding="utf-8", errors="ignore")
                 lines = content.splitlines()

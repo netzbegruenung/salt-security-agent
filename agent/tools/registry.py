@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.config import SaltConfig
+from agent.config import KNOWN_FILE_READS, SaltConfig
 from agent.tools.repo_tools import grep_repo, list_repo_files, read_repo_file
 from agent.tools.minion_tools import (
     DEFAULT_GREP_MATCHES,
@@ -24,6 +24,8 @@ from agent.tools.minion_tools import (
     grep_file_minion,
     ls_minion,
     read_file_minion,
+    resolve_path_minion,
+    validate_path,
 )
 
 # Read-only inspection tools. Available to the main agent and to sub-agents alike;
@@ -127,7 +129,7 @@ INVESTIGATION_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_os_info",
-            "description": "Return /etc/os-release contents on the minion (OS name, version, ID).",
+            "description": "Return /etc/os-release contents on the minion (OS name, version, ID). Reads a file, so it needs the operator's consent.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -173,7 +175,7 @@ INVESTIGATION_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_users",
-            "description": "Return local user accounts from /etc/passwd on the minion as username:uid:gid:home:shell. Does not expose passwords.",
+            "description": "Return local user accounts from /etc/passwd on the minion as username:uid:gid:home:shell. Does not expose passwords. Reads a file, so it needs the operator's consent.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -181,7 +183,7 @@ INVESTIGATION_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_cron_jobs",
-            "description": "Return root's crontab and a listing of /etc/cron.* directories on the minion. Common persistence mechanism.",
+            "description": "Return a listing of /etc/cron.* directories on the minion and, if the operator has consented to that read, root's crontab. Common persistence mechanism.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -271,12 +273,12 @@ CHAT_ONLY_TOOLS = [
         "function": {
             "name": "grep_file_minion",
             "description": (
-                "Recursively search a file or directory on the Salt minion for an extended "
-                "regular expression (case-sensitive, POSIX ERE as used by `grep -E`). Returns "
-                "matches as path:line:content, skipping binary files and cutting long lines. "
+                "Search one regular file on the Salt minion for an extended regular "
+                "expression (case-sensitive, POSIX ERE as used by `grep -E`). Not recursive: "
+                "directories are refused, so use `ls_minion` to find the file first. Returns "
+                "matches as line:content, skipping binary files and cutting long lines. "
                 f"Capped at {DEFAULT_GREP_MATCHES} matches by default and {MAX_GREP_MATCHES} "
-                "at most. Every call requires the operator's explicit approval — prefer a "
-                "narrow path over searching from the filesystem root."
+                "at most. Every call requires the operator's explicit approval."
             ),
             "parameters": {
                 "type": "object",
@@ -287,10 +289,7 @@ CHAT_ONLY_TOOLS = [
                     },
                     "path": {
                         "type": "string",
-                        "description": (
-                            "Absolute file or directory path on the minion to search. "
-                            "Directories are searched recursively."
-                        ),
+                        "description": "Absolute path of the file on the minion to search.",
                     },
                     "max_matches": {
                         "type": "integer",
@@ -309,8 +308,75 @@ CHAT_ONLY_TOOLS = [
 # two approval-gated file tools. No reporting, alerting, or delegation.
 CHAT_TOOLS = INVESTIGATION_TOOLS + CHAT_ONLY_TOOLS
 
-# Tools the operator must approve on every single call.
-APPROVAL_REQUIRED_TOOLS = frozenset({"read_file_minion", "grep_file_minion"})
+# Tools the operator must approve on every single call. Derived from the schema
+# list, so a tool added to CHAT_ONLY_TOOLS is gated without further bookkeeping.
+APPROVAL_REQUIRED_TOOLS = frozenset(tool["function"]["name"] for tool in CHAT_ONLY_TOOLS)
+
+# Inspection tools that read one fixed file on the minion, and which file that is
+# (entries of `agent.config.KNOWN_FILE_READS`). Without the operator's consent the
+# read does not happen: see `file_read_consented`.
+FIXED_FILE_READS = {
+    "get_os_info": "/etc/os-release",
+    "get_users": "/etc/passwd",
+    "get_cron_jobs": "root-crontab",
+}
+assert set(FIXED_FILE_READS.values()) == KNOWN_FILE_READS
+
+# Tools that still do something useful when their file read is not consented to.
+_DEGRADABLE_TOOLS = frozenset({"get_cron_jobs"})
+
+
+def file_read_consented(name: str, salt_cfg: SaltConfig) -> bool:
+    """True if `name` reads no fixed file, or the operator pre-approved that file."""
+    target = FIXED_FILE_READS.get(name)
+    return target is None or target in salt_cfg.preapproved_file_reads
+
+
+def investigation_tools(salt_cfg: SaltConfig) -> list[dict[str, Any]]:
+    """The inspection toolset for unattended agents (scan and sub-agents).
+
+    Nobody can approve a call there, so tools whose only purpose is a file read the
+    operator has not pre-approved are not offered at all.
+    """
+    return [
+        tool
+        for tool in INVESTIGATION_TOOLS
+        if file_read_consented(tool["function"]["name"], salt_cfg)
+        or tool["function"]["name"] in _DEGRADABLE_TOOLS
+    ]
+
+
+def approval_required(name: str, salt_cfg: SaltConfig) -> bool:
+    """Whether the chat must ask the operator before running this tool call."""
+    return name in APPROVAL_REQUIRED_TOOLS or not file_read_consented(name, salt_cfg)
+
+
+def prepare_approval(
+    name: str,
+    arguments: dict[str, Any],
+    minion: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Turn a gated call into what will run and what the operator is shown.
+
+    Returns `(call_arguments, shown)`. For the file tools the path is resolved on
+    the minion first, so `shown` names the real file behind any symlink and
+    `call_arguments` targets exactly that file. Raises ValueError if the path is
+    unusable; the operator is then not asked at all.
+    """
+    if name in FIXED_FILE_READS:
+        return arguments, {"reads": FIXED_FILE_READS[name]}
+
+    requested = validate_path(arguments.get("path"))
+    resolved = resolve_path_minion(minion, requested)
+    call_arguments = dict(arguments)
+    call_arguments["path"] = resolved
+    shown: dict[str, Any] = {"file": resolved}
+    if resolved != requested:
+        shown["requested_as"] = requested
+    for key, value in arguments.items():
+        if key != "path":
+            shown[key] = value
+    return call_arguments, shown
 
 
 # Terminal tools for the main agent only. Sub-agents never report or alert directly.
@@ -480,12 +546,21 @@ def call_investigation_tool(
     arguments: dict[str, Any],
     minion: str,
     salt_cfg: SaltConfig,
+    operator_approved: bool = False,
 ) -> str | None:
     """Dispatch a read-only inspection tool.
 
     Returns None if `name` is not an investigation tool, so callers can handle the
-    tools specific to their own agent role.
+    tools specific to their own agent role. `operator_approved` is set only by the
+    chat, after the operator approved this very call; otherwise fixed file reads
+    need pre-approval in the config.
     """
+    consented = operator_approved or file_read_consented(name, salt_cfg)
+    if not consented and name not in _DEGRADABLE_TOOLS:
+        return (
+            f"REFUSED: {name} reads {FIXED_FILE_READS[name]} on the minion, and the "
+            "operator has not approved that file read."
+        )
     if name == "ls_minion":
         return ls_minion(minion, arguments["path"])
     if name == "file_minion":
@@ -511,7 +586,7 @@ def call_investigation_tool(
     if name == "get_users":
         return get_users(minion)
     if name == "get_cron_jobs":
-        return get_cron_jobs(minion)
+        return get_cron_jobs(minion, include_root_crontab=consented)
     if name == "get_last_logins":
         return get_last_logins(minion)
     if name == "get_salt_grains":
@@ -528,13 +603,18 @@ def call_chat_tool(
     arguments: dict[str, Any],
     minion: str,
     salt_cfg: SaltConfig,
+    operator_approved: bool = False,
 ) -> str | None:
     """Dispatch a tool available in the interactive chat.
 
     Kept separate from `call_investigation_tool` so the chat-only file tools stay
     unreachable from the scan and sub-agent loops, which call that function directly.
+    The file tools run only with `operator_approved`, and expect the canonical path
+    produced by `prepare_approval`.
     """
-    result = call_investigation_tool(name, arguments, minion, salt_cfg)
+    result = call_investigation_tool(name, arguments, minion, salt_cfg, operator_approved)
+    if result is None and name in APPROVAL_REQUIRED_TOOLS and not operator_approved:
+        return f"REFUSED: {name} requires the operator's approval."
     if result is not None:
         return result
     if name == "read_file_minion":

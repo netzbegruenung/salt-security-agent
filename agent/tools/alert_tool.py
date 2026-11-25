@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import smtplib
+import ssl
 from email.message import EmailMessage
 
 from agent.config import SmtpConfig
@@ -87,12 +88,15 @@ def _send_mail(
         f"{details}\n"
     )
 
+    # smtplib's own default context verifies nothing; this one checks the server
+    # certificate and hostname, so credentials and alerts are not sent to an impostor.
+    context = ssl.create_default_context()
     if cfg.use_starttls:
         with smtplib.SMTP(cfg.host, cfg.port, timeout=30) as client:
-            client.starttls()
+            client.starttls(context=context)
             client.login(cfg.username, cfg.password)
             client.send_message(msg)
     else:
-        with smtplib.SMTP_SSL(cfg.host, cfg.port, timeout=30) as client:
+        with smtplib.SMTP_SSL(cfg.host, cfg.port, timeout=30, context=context) as client:
             client.login(cfg.username, cfg.password)
             client.send_message(msg)

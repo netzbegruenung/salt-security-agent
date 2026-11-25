@@ -75,6 +75,8 @@ max_iterations = 25    # tool-calling rounds per sub-agent
 
 [salt]
 repo_path = "/srv/salt"   # Absolute path to the Salt state repository on the master
+# Optional; see "File-read consent". Default: no minion file is read without asking.
+# preapproved_file_reads = ["/etc/os-release", "/etc/passwd", "root-crontab"]
 
 [celery]
 broker_url = "redis://localhost:6379/0"
@@ -91,6 +93,29 @@ from_address = "alerts@example.com"
 to_address = "soc@example.com"
 use_starttls = true  # STARTTLS; set false for implicit TLS / SMTPS (typically port 465)
 ```
+
+### File-read consent
+
+No model reads the content of a file on a minion unless the operator consented to that
+specific file.
+
+- **Unattended scans and sub-agents** cannot ask anyone, so they have no tool that takes a
+  file to read. Three inspection tools read one fixed file each; they do so only if that
+  file is listed in `salt.preapproved_file_reads`:
+
+  | Entry | Tool | Without the entry |
+  | --- | --- | --- |
+  | `"/etc/os-release"` | `get_os_info` | tool is not offered |
+  | `"/etc/passwd"` | `get_users` | tool is not offered |
+  | `"root-crontab"` | `get_cron_jobs` | lists the cron directories, omits `crontab -l` |
+
+- **The interactive chat** asks the operator before every call that reads file content;
+  see [Interactive chat](#interactive-chat).
+
+Paths passed to `ls_minion` and `file_minion` must be absolute, printable and free of
+`..`, and are passed after `--`, so they cannot be turned into command-line options.
+Process lists (`ps aux`) and Salt grains are not files and are sent without asking; they
+can still contain secrets such as passwords in command-line arguments.
 
 ### Threat model and task
 
@@ -156,19 +181,33 @@ Two tools exist **only** in this mode and are absent from the scan and sub-agent
 - `read_file_minion(path, offset, limit)` — a page of a text file from the minion, with
   absolute line numbers (300 lines per call by default, 2000 at most). Binary files are
   refused rather than dumped.
-- `grep_file_minion(pattern, path, max_matches)` — recursive `grep -E` over a path on the
-  minion, capped at 100 matches by default.
+- `grep_file_minion(pattern, path, max_matches)` — `grep -E` over **one regular file** on
+  the minion (never a directory), capped at 100 matches by default.
 
-Every call to either tool is gated: the footer shows the exact call and waits for a key.
-`y` approves it, **anything else denies it**, and a denial is fed back to the model as a
-refusal it is told not to retry. All other inspection tools (the same read-only set a scan
-uses) run without asking. Their output is wrapped in the usual untrusted-data markers with
-a per-session nonce before it reaches the model.
+Every call to either tool is gated, and so is every call to `get_os_info`, `get_users` or
+`get_cron_jobs` whose file is not in `salt.preapproved_file_reads`. One approval covers
+exactly one file:
+
+- The path is resolved on the minion (`realpath`) **before** you are asked. The prompt
+  names the real file, plus the path the model asked for if that was a symlink, and the
+  call then runs against exactly that file; if it has turned into a symlink in the
+  meantime, the read is refused.
+- The whole call is printed in the transcript, untruncated, with every value quoted and
+  non-printable characters escaped. The footer only asks the question.
+- `y` approves it, **anything else denies it**, and a denial is fed back to the model as a
+  refusal it is told not to retry. Keys pressed in the first 0.6 s after the prompt
+  appears are ignored, and type-ahead is discarded, so a stray keystroke cannot approve a
+  call you have not read.
+
+All other inspection tools run without asking. Their output is wrapped in the usual
+untrusted-data markers with a per-session nonce before it reaches the model.
 
 ```
 > is root login enabled over ssh?
 - read_file_minion path=/etc/ssh/sshd_config
-approve read_file_minion path=/etc/ssh/sshd_config? [y/N]
+APPROVAL REQUIRED: read_file_minion
+  file = "/etc/ssh/sshd_config"
+approve the read_file_minion call shown above? [y/N]
 ```
 
 Responses stream as they are generated; if the endpoint rejects `stream: true`, the
